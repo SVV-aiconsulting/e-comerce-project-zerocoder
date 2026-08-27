@@ -7,7 +7,8 @@ on:
 
 concurrency:
   group: deploy-webmarket-production
-  cancel-in-progress: false
+  # Новый commit заменяет устаревший deployment, чтобы не ждать его SSH timeout.
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -173,12 +174,14 @@ jobs:
             git fetch "https://github.com/$REPOSITORY.git" main
             git checkout -B main FETCH_HEAD
 
+            echo "STEP: pull immutable container images"
             export WEBMARKET_IMAGE_TAG="${{ github.sha }}"
             export WEBMARKET_TELEGRAM_BOT_IMAGE_TAG="${{ github.sha }}"
             export WEBMARKET_VK_BOT_IMAGE_TAG="${{ github.sha }}"
             export COMPOSE_PROJECT_NAME=webmarket
-            docker compose -f docker-compose.prod.yml pull
+            timeout 15m docker compose -f docker-compose.prod.yml pull
 
+            echo "STEP: prepare TLS certificate"
             mkdir -p deploy/certbot/conf deploy/certbot/www
             if [ ! -f "deploy/certbot/conf/live/$DOMAIN/fullchain.pem" ]; then
               docker compose -f docker-compose.prod.yml stop nginx || true
@@ -190,8 +193,13 @@ jobs:
                 -d "$DOMAIN"
             fi
 
+            echo "STEP: start application containers"
             docker compose -f docker-compose.prod.yml up -d --no-build
+            echo "STEP: apply database migrations"
             docker compose -f docker-compose.prod.yml exec -T web python manage.py migrate --noinput
+            echo "STEP: run production configuration check"
             docker compose -f docker-compose.prod.yml exec -T web python manage.py check --deploy
+            echo "STEP: verify HTTPS health-check"
             curl -fsS --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/health/"
+            echo "STEP: show service status"
             docker compose -f docker-compose.prod.yml ps
