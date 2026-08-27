@@ -58,7 +58,7 @@ YOOKASSA_RETURN_URL=https://webmarket.apernova.ru/payment/return/
 
 | Secret | Значение |
 |---|---|
-| `VPS_HOST` | `45.12.73.81` |
+| `VPS_HOST` | публичный IP-адрес VPS (хранится только в Secret) |
 | `VPS_USER` | пользователь SSH на VPS |
 | `VPS_SSH_KEY` | приватный SSH-ключ этого пользователя (весь блок PEM/OpenSSH) |
 | `VPS_PORT` | обычно `22` |
@@ -80,7 +80,7 @@ YOOKASSA_RETURN_URL=https://webmarket.apernova.ru/payment/return/
 
 ## Первый запуск
 
-1. Убедитесь, что DNS-запись `webmarket.apernova.ru` указывает на `45.12.73.81`.
+1. Убедитесь, что DNS-запись `webmarket.apernova.ru` указывает на ваш VPS.
 2. Выполните подготовку VPS и заполните `.env`.
 3. Создайте Secrets.
 4. Запушьте код в `main` или запустите workflow вручную: **Actions → Test, build and
