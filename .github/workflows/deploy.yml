@@ -162,10 +162,9 @@ jobs:
             grep -qE '^DJANGO_DEBUG=False$' .env || { echo "ERROR: DJANGO_DEBUG=False is required"; exit 1; }
             grep -q "$DOMAIN" .env || { echo "ERROR: $DOMAIN must be listed in production .env"; exit 1; }
 
-            git fetch "https://x-access-token:${{ secrets.VPS_GHCR_TOKEN }}@github.com/$REPOSITORY.git" main
+            git fetch "https://github.com/$REPOSITORY.git" main
             git checkout -B main FETCH_HEAD
 
-            echo "${{ secrets.VPS_GHCR_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
             export WEBMARKET_IMAGE_TAG="${{ github.sha }}"
             export WEBMARKET_TELEGRAM_BOT_IMAGE_TAG="${{ github.sha }}"
             export WEBMARKET_VK_BOT_IMAGE_TAG="${{ github.sha }}"
