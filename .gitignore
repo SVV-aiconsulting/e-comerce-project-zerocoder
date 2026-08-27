@@ -1,0 +1,43 @@
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Django
+staticfiles/
+media/
+*.log
+db.sqlite3
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local reports/notes
+report*.md
+
+# Local service data
+.local/
+
+# TLS certificates created only on VPS by Certbot.
+deploy/certbot/conf/
+deploy/certbot/www/

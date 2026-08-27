@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "webmarket"
+version = "0.1.0"
+description = "Backend-ядро интернет-магазина с CRM-функциями"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "celery[redis]~=5.6",
+    "django~=5.2",
+    "djangorestframework>=3.15",
+    "psycopg[binary]>=3.1",
+    "django-environ>=0.11",
+    "Pillow>=10.0",
+    "gunicorn>=22.0",
+    "httpx>=0.28,<1",
+    "pydantic>=2.12,<3",
+    "whitenoise>=6.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-django>=4.8",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["apps*", "config*"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.local"
+python_files = ["tests.py", "test_*.py"]
+pythonpath = ["."]
