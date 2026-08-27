@@ -30,15 +30,14 @@ VPS не собирает Python- или Docker-образы. Его роль �
 ```bash
 sudo mkdir -p /opt/webmarket
 sudo chown "$USER":"$USER" /opt/webmarket
-git clone https://github.com/SVV-aiconsulting/e-comerce-project-zerocoder.git /opt/webmarket
 cd /opt/webmarket
-cp .env.example .env
+touch .env
 chmod 600 .env
 ```
 
-Если репозиторий сделан private, клонируйте его через SSH deploy key либо временный
-GitHub PAT с правом чтения репозитория. После клонирования в `.env` VPS обязательно
-укажите как минимум:
+Первый deployment сам инициализирует Git-репозиторий в этом каталоге и получает
+актуальный `main`; вручную выполнять `git clone` не требуется. Существующий `.env`
+остаётся нетронутым. После заполнения в `.env` VPS обязательно должны быть как минимум:
 
 ```dotenv
 DJANGO_DEBUG=False
