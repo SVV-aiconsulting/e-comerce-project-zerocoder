@@ -195,6 +195,20 @@ jobs:
 
             echo "STEP: start application containers"
             docker compose -f docker-compose.prod.yml up -d --no-build
+            echo "STEP: wait for Docker DNS inside web container"
+            for attempt in $(seq 1 15); do
+              if docker compose -f docker-compose.prod.yml exec -T web \
+                python -c "import socket; socket.getaddrinfo('db', 5432)" >/dev/null 2>&1; then
+                break
+              fi
+              if [ "$attempt" -eq 15 ]; then
+                echo "ERROR: Docker DNS cannot resolve db from web after 30 seconds"
+                docker compose -f docker-compose.prod.yml ps || true
+                docker compose -f docker-compose.prod.yml exec -T web cat /etc/resolv.conf || true
+                exit 1
+              fi
+              sleep 2
+            done
             echo "STEP: apply database migrations"
             docker compose -f docker-compose.prod.yml exec -T web python manage.py migrate --noinput
             echo "STEP: run production configuration check"
