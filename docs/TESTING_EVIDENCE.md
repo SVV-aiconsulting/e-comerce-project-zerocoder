@@ -1,6 +1,6 @@
 # Тестирование и доказательства готовности MVP
 
-Дата актуализации: 26.08.2026.
+Дата актуализации: 27.08.2026.
 
 ## Автоматические проверки
 
@@ -33,6 +33,23 @@
 для этого владелец сначала добавляет Secrets и включает переменную
 `DEPLOY_ENABLED=true` по инструкции `docs/GITHUB_ACTIONS_DEPLOYMENT.md`.
 
+После включения deployment и исправления инициализации VPS успешно завершён
+workflow для коммита `8d65cb6`:
+
+| Job | Результат |
+|---|---|
+| Backend tests | success |
+| Telegram adapter tests | success |
+| VK adapter tests | success |
+| Build and publish container images | success |
+| Deploy immutable release to VPS | success |
+
+Во время первого запуска получен TLS-сертификат Let's Encrypt. Финальная проверка
+`https://webmarket.apernova.ru/api/health/` вернула HTTP 200 и JSON
+`{"status":"успешно"}`. Deployment применил миграции и `manage.py check --deploy`.
+Исходные образы собираются GitHub Actions и публикуются в GHCR; VPS только скачивает
+их и запускает, что соответствует принятой схеме ресурсов.
+
 Предупреждения тестовой среды не относятся к логике MVP: отсутствующий пока каталог
 `staticfiles`, предстоящее изменение значения по умолчанию Django `URLField` и
 невозможность создать `.pytest_cache` на пути Windows с кириллицей. Ошибок и
@@ -55,11 +72,8 @@
 только после появления реальных данных. В снимки нельзя включать `.env`, API-ключи,
 номера карт, полные адреса и персональные контакты клиентов.
 
-## Внешние проверки, ожидающие домен
+## Внешние проверки, ожидающие E2E
 
-- DNS для `webmarket.apernova.ru` должен указывать на VPS проекта.
-- На VPS должны быть настроены HTTPS, redirect HTTP → HTTPS, `ALLOWED_HOSTS` и
-  `CSRF_TRUSTED_ORIGINS`.
 - Затем в test shop ЮKassa указывается реальный URL
   `https://webmarket.apernova.ru/api/webhooks/payments/yookassa/` и выполняется
   тестовый платёж. До этого указывать фиктивный URL нельзя.
