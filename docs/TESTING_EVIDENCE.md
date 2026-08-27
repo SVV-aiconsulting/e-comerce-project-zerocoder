@@ -16,6 +16,23 @@
 | VK-адаптер | `py -3.14 -m pytest frontends/vk_bot/tests -q` | 30 passed |
 | Всего | три набора выше | **243 passed** |
 
+## Проверка CI/CD
+
+27.08.2026 GitHub Actions успешно выполнил workflow для коммита `7c9ceee`:
+
+| Job | Результат |
+|---|---|
+| Backend tests | success |
+| Telegram adapter tests | success |
+| VK adapter tests | success |
+| Build and publish container images | success |
+| Deploy immutable release to VPS | skipped по защите `DEPLOY_ENABLED` |
+
+Таким образом, GitHub самостоятельно подтвердил тесты и собрал/published три
+контейнерных образа. VPS не использовался для сборки и ещё не получил deployment:
+для этого владелец сначала добавляет Secrets и включает переменную
+`DEPLOY_ENABLED=true` по инструкции `docs/GITHUB_ACTIONS_DEPLOYMENT.md`.
+
 Предупреждения тестовой среды не относятся к логике MVP: отсутствующий пока каталог
 `staticfiles`, предстоящее изменение значения по умолчанию Django `URLField` и
 невозможность создать `.pytest_cache` на пути Windows с кириллицей. Ошибок и
