@@ -613,10 +613,31 @@ VPS и домен `webmarket.apernova.ru` зарезервированы для 
 #### Результат и решение
 
 Секреты SSH-подключения добавлены. Для запуска deployment намеренно остаются
-обязательными `VPS_APP_DIR`, `VPS_GHCR_TOKEN`, `LETSENCRYPT_EMAIL` и repository
-variable `DEPLOY_ENABLED=true`, а на VPS — production `.env`. До их добавления
-GitHub Actions продолжает только тестировать и собирать образы, не подключаясь к
-серверу.
+обязательными `VPS_APP_DIR`, `LETSENCRYPT_EMAIL` и repository variable
+`DEPLOY_ENABLED=true`, а на VPS — production `.env`. Поскольку GitHub-репозиторий
+и GHCR-образы публичны, отдельный token для загрузки образов не требуется. До
+завершения настройки GitHub Actions продолжает только тестировать и собирать образы,
+не подключаясь к серверу.
+
+### DEV-023 — Нужен ли токен для публичного GHCR
+
+- Дата: 27.08.2026
+- Тип: development
+- Этап проекта: этап 8
+- Модель/провайдер: Codex
+- Статус: accepted
+- Цель: минимизировать привилегии deployment-процесса.
+
+#### Текст промпта
+
+> Зачем нам `VPS_GHCR_TOKEN` если репозиторий у нас сейчас публичный? токен же нужен только для приватных репозиториев
+
+#### Результат и решение
+
+Подтверждено анонимной проверкой registry: backend, Telegram- и VK-образы в GHCR
+публичны. `VPS_GHCR_TOKEN` исключён из workflow и списка Secrets. GitHub Actions
+по-прежнему использует краткоживущий встроенный `GITHUB_TOKEN` только внутри GitHub
+для публикации образов.
 
 ## Runtime-промпты
 

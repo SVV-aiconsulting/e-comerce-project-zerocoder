@@ -63,11 +63,12 @@ YOOKASSA_RETURN_URL=https://webmarket.apernova.ru/payment/return/
 | `VPS_SSH_KEY` | приватный SSH-ключ этого пользователя (весь блок PEM/OpenSSH) |
 | `VPS_PORT` | обычно `22` |
 | `VPS_APP_DIR` | `/opt/webmarket` или выбранный путь |
-| `VPS_GHCR_TOKEN` | GitHub PAT c `read:packages`; для private-репозитория также правом чтения contents/repo |
 | `LETSENCRYPT_EMAIL` | рабочий email для уведомлений Let's Encrypt |
 
-`VPS_GHCR_TOKEN` никогда не помещается в `.env` или код. Он нужен action только для
-чтения GitHub-репозитория на VPS и загрузки private GHCR-образов.
+Репозиторий и три GHCR-образа для этого MVP публичны. Поэтому VPS клонирует код и
+загружает образы анонимно — отдельный GitHub PAT не нужен. Если в будущем репозиторий
+или package visibility станет private, потребуется вернуть отдельный read-only токен
+с `read:packages` и доступом к репозиторию.
 
 После создания и проверки всех Secrets откройте вкладку **Variables** того же
 раздела, создайте переменную `DEPLOY_ENABLED` со значением `true`. Это единственный
