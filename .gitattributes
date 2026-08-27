@@ -1,0 +1,8 @@
+# Репозиторий хранит текст в LF независимо от Windows-рабочей станции.
+* text=auto eol=lf
+
+# Медиа не перекодируются Git.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary

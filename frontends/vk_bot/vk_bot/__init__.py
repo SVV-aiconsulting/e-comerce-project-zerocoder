@@ -1,0 +1,1 @@
+"""VK frontend-адаптер WebMarket."""

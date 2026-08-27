@@ -1,0 +1,12 @@
+"""Общие абстрактные модели."""
+from django.db import models
+
+
+class TimeStampedModel(models.Model):
+    """Базовая модель с полями даты создания и обновления."""
+
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Создано")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Обновлено")
+
+    class Meta:
+        abstract = True

@@ -1,0 +1,32 @@
+name: Renew WebMarket TLS certificate
+
+on:
+  schedule:
+    - cron: "17 3 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Renew certificate and reload nginx
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            APP_DIR="${{ secrets.VPS_APP_DIR }}"
+            cd "$APP_DIR"
+            docker run --rm \
+              -v "$PWD/deploy/certbot/conf:/etc/letsencrypt" \
+              -v "$PWD/deploy/certbot/www:/var/www/certbot" \
+              certbot/certbot renew --webroot -w /var/www/certbot --quiet
+            docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload

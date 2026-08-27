@@ -1,0 +1,76 @@
+{% extends "admin/base_site.html" %}
+{% load l10n %}
+
+{% block title %}Дашборд менеджера | WebMarket{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+  .dashboard-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; margin: 18px 0; }
+  .dashboard-card { background: var(--body-bg); border: 1px solid var(--hairline-color); border-radius: 6px; padding: 16px; }
+  .dashboard-card strong { display: block; font-size: 1.7em; margin-top: 8px; }
+  .dashboard-card small { color: var(--body-quiet-color); }
+  .dashboard-table { width: 100%; margin: 12px 0 24px; }
+  .dashboard-table th, .dashboard-table td { padding: 9px; border-bottom: 1px solid var(--hairline-color); text-align: left; }
+  .period-form { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin: 16px 0; }
+  .period-form label { display: flex; flex-direction: column; gap: 4px; font-weight: bold; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  <h1>Дашборд менеджера</h1>
+  <p>Сводка заказов и автоматизации за выбранный период. Данные берутся из CRM PostgreSQL.</p>
+
+  <form method="get" class="period-form">
+    <label>С
+      <input type="date" name="from" value="{{ period_start|date:'Y-m-d' }}">
+    </label>
+    <label>По
+      <input type="date" name="to" value="{{ period_end|date:'Y-m-d' }}">
+    </label>
+    <input type="submit" value="Показать" class="default">
+  </form>
+
+  <div class="dashboard-grid">
+    <div class="dashboard-card"><small>Заказы</small><strong>{{ order_count }}</strong></div>
+    <div class="dashboard-card"><small>Оборот</small><strong>{{ revenue|floatformat:2 }} ₽</strong></div>
+    <div class="dashboard-card"><small>Оплачено</small><strong>{{ paid_count }} ({{ paid_share }}%)</strong></div>
+    <div class="dashboard-card"><small>Автоматически создано</small><strong>{{ automated_orders }} ({{ automation_share }}%)</strong></div>
+    <div class="dashboard-card"><small>AI-черновики</small><strong>{{ draft_count }}</strong></div>
+    <div class="dashboard-card"><small>AI-вызовы: успех / ошибки</small><strong>{{ ai_stats.succeeded|default:0 }} / {{ ai_stats.failed|default:0 }}</strong><small>средняя задержка: {{ ai_stats.avg_latency|default:0|floatformat:0 }} мс</small></div>
+  </div>
+
+  <h2>Заказы по каналам</h2>
+  <table class="dashboard-table">
+    <thead><tr><th>Канал</th><th>Заказов</th><th>Оборот</th></tr></thead>
+    <tbody>
+      {% for row in channels %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td><td>{{ row.revenue|floatformat:2 }} ₽</td></tr>{% empty %}<tr><td colspan="3">За выбранный период заказов нет.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+
+  <div class="dashboard-grid">
+    <div class="dashboard-card">
+      <small>Статусы заказов</small>
+      {% for row in order_statuses %}<p>{{ row.label }}: {{ row.count }}</p>{% empty %}<p>Нет данных</p>{% endfor %}
+    </div>
+    <div class="dashboard-card">
+      <small>Статусы оплаты</small>
+      {% for row in payment_statuses %}<p>{{ row.label }}: {{ row.count }}</p>{% empty %}<p>Нет данных</p>{% endfor %}
+    </div>
+    <div class="dashboard-card">
+      <small>Статусы доставок</small>
+      {% for row in shipment_statuses %}<p>{{ row.label }}: {{ row.count }}</p>{% empty %}<p>Нет данных</p>{% endfor %}
+    </div>
+  </div>
+
+  <h2>Очередь внимания ({{ attention|length }})</h2>
+  {% if attention_counts %}<p>{% for category, count in attention_counts.items %}{{ category }}: {{ count }}{% if not forloop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+  <table class="dashboard-table">
+    <thead><tr><th>Категория</th><th>Объект</th><th>Что произошло</th><th>Обновлено</th></tr></thead>
+    <tbody>
+      {% for item in attention %}<tr><td>{{ item.category }}</td><td><a href="{{ item.admin_url }}">{{ item.label }}</a></td><td>{{ item.detail }}</td><td>{{ item.created_at|date:"d.m.Y H:i" }}</td></tr>{% empty %}<tr><td colspan="4">Открытых исключений нет.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
