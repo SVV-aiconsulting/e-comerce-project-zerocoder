@@ -164,14 +164,10 @@ jobs:
             grep -q "$DOMAIN" .env || { echo "ERROR: $DOMAIN must be listed in production .env"; exit 1; }
 
             if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-              git init -b main
+              # Совместимо с Git старее 2.28, который не поддерживает `git init -b`.
+              git init
             fi
-            if git remote get-url origin >/dev/null 2>&1; then
-              git remote set-url origin "https://github.com/$REPOSITORY.git"
-            else
-              git remote add origin "https://github.com/$REPOSITORY.git"
-            fi
-            git fetch origin main
+            git fetch "https://github.com/$REPOSITORY.git" main
             git checkout -B main FETCH_HEAD
 
             export WEBMARKET_IMAGE_TAG="${{ github.sha }}"
