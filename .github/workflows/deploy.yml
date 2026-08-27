@@ -156,13 +156,22 @@ jobs:
             APP_DIR="${{ secrets.VPS_APP_DIR }}"
             REPOSITORY="${{ github.repository }}"
             DOMAIN="${{ env.DOMAIN }}"
+            mkdir -p "$APP_DIR"
             cd "$APP_DIR"
 
             test -f .env || { echo "ERROR: create production .env on VPS before deployment"; exit 1; }
             grep -qE '^DJANGO_DEBUG=False$' .env || { echo "ERROR: DJANGO_DEBUG=False is required"; exit 1; }
             grep -q "$DOMAIN" .env || { echo "ERROR: $DOMAIN must be listed in production .env"; exit 1; }
 
-            git fetch "https://github.com/$REPOSITORY.git" main
+            if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+              git init -b main
+            fi
+            if git remote get-url origin >/dev/null 2>&1; then
+              git remote set-url origin "https://github.com/$REPOSITORY.git"
+            else
+              git remote add origin "https://github.com/$REPOSITORY.git"
+            fi
+            git fetch origin main
             git checkout -B main FETCH_HEAD
 
             export WEBMARKET_IMAGE_TAG="${{ github.sha }}"
