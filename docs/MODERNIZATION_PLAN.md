@@ -354,8 +354,8 @@ Telegram / VK / Email / Web
 `docs/TESTING_EVIDENCE.md`.
 
 Результат CI/CD-подготовки от 27.08.2026: GitHub Actions сначала тестирует backend,
-Telegram и VK, затем собирает SHA-образы в GHCR и разворачивает их по SSH на
-`45.12.73.81`. Для домена `webmarket.apernova.ru` подготовлены nginx HTTPS,
+Telegram и VK, затем собирает SHA-образы в GHCR и разворачивает их по SSH на VPS.
+Для домена `webmarket.apernova.ru` подготовлены nginx HTTPS,
 Let’s Encrypt и ежемесячное продление сертификата. Порядок первого запуска и
 необходимые GitHub Secrets описаны в `docs/GITHUB_ACTIONS_DEPLOYMENT.md`.
 

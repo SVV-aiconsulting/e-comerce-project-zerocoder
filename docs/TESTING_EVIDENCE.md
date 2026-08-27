@@ -57,7 +57,7 @@
 
 ## Внешние проверки, ожидающие домен
 
-- DNS для `webmarket.apernova.ru` должен указывать на `45.12.73.81`.
+- DNS для `webmarket.apernova.ru` должен указывать на VPS проекта.
 - На VPS должны быть настроены HTTPS, redirect HTTP → HTTPS, `ALLOWED_HOSTS` и
   `CSRF_TRUSTED_ORIGINS`.
 - Затем в test shop ЮKassa указывается реальный URL
