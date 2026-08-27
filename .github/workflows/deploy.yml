@@ -139,10 +139,7 @@ jobs:
   deploy:
     name: Deploy immutable release to VPS
     needs: build-and-push
-    if: >-
-      ${{ secrets.VPS_HOST != '' && secrets.VPS_USER != '' &&
-          secrets.VPS_SSH_KEY != '' && secrets.VPS_APP_DIR != '' &&
-          secrets.VPS_GHCR_TOKEN != '' && secrets.LETSENCRYPT_EMAIL != '' }}
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     environment: production
     steps:
