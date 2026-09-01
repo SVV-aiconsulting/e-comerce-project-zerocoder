@@ -131,6 +131,8 @@ def test_storefront_renders_catalog_from_demo_data(client):
     assert "Икра лососёвая" in content
     assert 'id="catalog"' in content
     assert 'data-add-to-cart' in content
+    assert 'href="/static/website/css/storefront.css"' in content
+    assert 'src="/static/website/js/storefront.js"' in content
     salmon = Product.objects.get(public_code="DEMO-SALMON")
     assert f'data-product-id="{salmon.id}"' in content
     assert "website/catalog/DEMO-SALMON.jpg" not in content
