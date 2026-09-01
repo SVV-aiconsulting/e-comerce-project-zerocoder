@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from django.core.management.base import BaseCommand
 
-from apps.catalog.models import Product, ProductAlias
+from apps.catalog.models import Product, ProductAlias, normalize_product_text
 from apps.common.enums import ProductUnit
 from apps.delivery.models import DeliveryRule
 from apps.discounts.models import DiscountRule
@@ -177,7 +177,11 @@ class Command(BaseCommand):
                 },
             )
             for alias in data.get("aliases", []):
-                ProductAlias.objects.get_or_create(product=product, alias=alias)
+                ProductAlias.objects.get_or_create(
+                    product=product,
+                    normalized_alias=normalize_product_text(alias),
+                    defaults={"alias": alias},
+                )
             action = "Создан" if created else "Уже есть"
             self.stdout.write(f"{action}: товар «{product.name}» ({product.public_code})")
 
