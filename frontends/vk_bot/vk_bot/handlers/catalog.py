@@ -43,7 +43,9 @@ async def show_catalog(api, peer_id: int, user_id: int, storefront_api, api_hold
             peer_id,
             product,
             quantity,
-            backend_base_url=settings.backend_api_base_url,
+            media_base_url=(
+                settings.product_media_base_url or settings.backend_api_base_url
+            ),
             photo_uploader=photo_uploader,
         )
 
@@ -121,7 +123,9 @@ async def _adjust_product_qty(event, api_holder: dict, *, delta: Decimal) -> Non
                 event,
                 product,
                 new_qty,
-                backend_base_url=settings.backend_api_base_url,
+                media_base_url=(
+                    settings.product_media_base_url or settings.backend_api_base_url
+                ),
                 photo_uploader=api_holder.get("photo_uploader"),
             )
         except Exception:
@@ -130,7 +134,9 @@ async def _adjust_product_qty(event, api_holder: dict, *, delta: Decimal) -> Non
                 event.peer_id,
                 product,
                 new_qty,
-                backend_base_url=settings.backend_api_base_url,
+                media_base_url=(
+                    settings.product_media_base_url or settings.backend_api_base_url
+                ),
                 photo_uploader=api_holder.get("photo_uploader"),
             )
 

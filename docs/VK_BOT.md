@@ -59,6 +59,7 @@ VK_AI_POLL_ATTEMPTS=20
 VK_AI_POLL_INTERVAL_SECONDS=0.75
 
 BACKEND_API_BASE_URL=http://web:8000
+PRODUCT_MEDIA_BASE_URL=http://nginx:8080
 ADAPTER_API_TOKEN=<тот-же-токен-что-в-ADAPTER_API_TOKENS>
 ```
 
@@ -96,6 +97,9 @@ docker compose -f docker-compose.prod.yml --profile vk up -d vk_bot
 ```
 
 После добавления `VK_BOT_TOKEN` в `.env` на VPS.
+
+В production `PRODUCT_MEDIA_BASE_URL=http://nginx:8080`: бот скачивает фото
+через внутренний Nginx, а не через Gunicorn. Этот порт доступен только в Docker-сети.
 
 ## 6. Ручная проверка сценария
 

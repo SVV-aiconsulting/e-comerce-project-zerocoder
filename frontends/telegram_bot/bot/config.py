@@ -7,6 +7,7 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str
     backend_api_base_url: str = "http://web:8000"
+    product_media_base_url: str = ""
     adapter_api_token: str
     telegram_bot_use_polling: bool = True
     telegram_bot_log_level: str = "INFO"

@@ -64,12 +64,12 @@ async def send_product_card(
     product: dict,
     quantity: Decimal,
     *,
-    backend_base_url: str,
+    media_base_url: str,
 ) -> None:
     text = format_product_card(product)
     keyboard = product_keyboard(product["id"], quantity_label(quantity))
     image_url = product.get("main_image_url") or ""
-    photo_file = await load_image_file(image_url, backend_base_url, filename="product.jpg")
+    photo_file = await load_image_file(image_url, media_base_url, filename="product.jpg")
     if photo_file is not None:
         await message.answer_photo(photo=photo_file, caption=text, reply_markup=keyboard)
         return

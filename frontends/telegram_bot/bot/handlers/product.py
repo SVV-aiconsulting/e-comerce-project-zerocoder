@@ -118,6 +118,8 @@ async def callback_product_adjust_qty(callback: CallbackQuery, state: FSMContext
             callback.message,
             product,
             current,
-            backend_base_url=settings.backend_api_base_url,
+            media_base_url=(
+                settings.product_media_base_url or settings.backend_api_base_url
+            ),
         )
     await callback.answer()

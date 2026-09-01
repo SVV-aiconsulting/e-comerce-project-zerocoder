@@ -182,6 +182,8 @@ services:
       # Внутри Docker-сети бот обращается к backend напрямую: внешний nginx
       # принудительно перенаправляет HTTP на HTTPS и не нужен для API-вызовов бота.
       BACKEND_API_BASE_URL: http://web:8000
+      # Product photos are served only by nginx from the shared media volume.
+      PRODUCT_MEDIA_BASE_URL: http://nginx:8080
     depends_on:
       nginx:
         condition: service_healthy
@@ -210,6 +212,7 @@ services:
       - .env
     environment:
       BACKEND_API_BASE_URL: http://web:8000
+      PRODUCT_MEDIA_BASE_URL: http://nginx:8080
     depends_on:
       nginx:
         condition: service_healthy

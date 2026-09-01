@@ -21,6 +21,7 @@ Telegram-бот — frontend-адаптер продаж. Работает че�
 TELEGRAM_BOT_TOKEN=<токен-от-BotFather>
 ADAPTER_API_TOKEN=<тот-же-токен-что-в-ADAPTER_API_TOKENS>
 BACKEND_API_BASE_URL=http://web:8000
+PRODUCT_MEDIA_BASE_URL=http://nginx:8080
 TELEGRAM_BOT_USE_POLLING=true
 TELEGRAM_BOT_LOG_LEVEL=INFO
 TELEGRAM_AI_POLL_ATTEMPTS=20
@@ -32,7 +33,8 @@ TELEGRAM_AI_POLL_INTERVAL_SECONDS=0.75
 |------------|------------|
 | `TELEGRAM_BOT_TOKEN` | Токен от BotFather |
 | `ADAPTER_API_TOKEN` | Заголовок `X-Adapter-Token` для REST API |
-| `BACKEND_API_BASE_URL` | URL backend (`http://web:8000` в Docker, `http://localhost:8000` локально, `http://nginx` на VPS) |
+| `BACKEND_API_BASE_URL` | URL backend (`http://web:8000` в Docker Compose / на VPS; `http://localhost:8000` при запуске бота на хосте) |
+| `PRODUCT_MEDIA_BASE_URL` | Отдельный URL Nginx для скачивания фото товаров. В production: `http://nginx:8080`; при запуске без Nginx оставьте пустым. |
 | `TELEGRAM_BOT_USE_POLLING` | `true` — единственный поддерживаемый режим (webhook не реализован) |
 | `TELEGRAM_BOT_LOG_LEVEL` | `INFO`, `DEBUG`, … |
 | `TELEGRAM_AI_POLL_ATTEMPTS` | Число проверок результата AI-события |
@@ -80,11 +82,15 @@ Telegram-бот входит в стандартный `docker-compose.prod.yml`
 ```env
 TELEGRAM_BOT_TOKEN=<токен>
 ADAPTER_API_TOKEN=<токен-адаптера>
-BACKEND_API_BASE_URL=http://nginx
+BACKEND_API_BASE_URL=http://web:8000
+PRODUCT_MEDIA_BASE_URL=http://nginx:8080
 TELEGRAM_BOT_USE_POLLING=true
 ```
 
-`BACKEND_API_BASE_URL=http://nginx` нужен, чтобы бот корректно загружал изображения товаров из `/media/` через nginx.
+В `docker-compose.prod.yml` `BACKEND_API_BASE_URL` переопределён на
+`http://web:8000` только для API-запросов. Фото Gunicorn не обслуживает, поэтому
+`PRODUCT_MEDIA_BASE_URL=http://nginx:8080` направляет их на внутренний Nginx,
+который имеет общий с Django volume `media_data`. Порт 8080 не опубликован наружу.
 
 ## 5. Ручная проверка сценария
 
@@ -200,7 +206,7 @@ pytest
 |---------|-------------|
 | «Магазин временно недоступен» | Проверить `curl http://localhost:8000/api/health/`, логи `web` |
 | Бот не отвечает / timeout к Telegram | Задать `TELEGRAM_PROXY`, перезапустить контейнер |
-| Фото товаров не грузятся на VPS | `BACKEND_API_BASE_URL=http://nginx`, в `DJANGO_ALLOWED_HOSTS` — `nginx` |
+| Фото товаров не грузятся на VPS | Проверить `PRODUCT_MEDIA_BASE_URL=http://nginx:8080`, логи `telegram_bot` и общий volume `media_data` у `web` и `nginx` |
 | `Backend not available at startup` | Дождаться `healthy` у `web` / `nginx`, перезапустить бота |
 | Бот 400 при старте | Проверить `TELEGRAM_BOT_TOKEN` и доступность backend |
 | `Invalid line: \ufeff# Django` | Сохранить `.env` в UTF-8 **без BOM** (Windows) |
