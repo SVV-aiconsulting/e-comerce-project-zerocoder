@@ -26,8 +26,16 @@ jobs:
             set -euo pipefail
             APP_DIR="${{ secrets.VPS_APP_DIR }}"
             cd "$APP_DIR"
+            # Должен совпадать с deploy.yml: иначе Compose ищет контейнеры с
+            # именем, вычисленным из каталога, а не webmarket-nginx-1.
+            export COMPOSE_PROJECT_NAME=webmarket
             docker run --rm \
               -v "$PWD/deploy/certbot/conf:/etc/letsencrypt" \
               -v "$PWD/deploy/certbot/www:/var/www/certbot" \
               certbot/certbot renew --webroot -w /var/www/certbot --quiet
+            docker compose -f docker-compose.prod.yml ps --status running nginx | grep -q nginx || {
+              echo "ERROR: nginx is not running in Compose project $COMPOSE_PROJECT_NAME"
+              docker compose -f docker-compose.prod.yml ps
+              exit 1
+            }
             docker compose -f docker-compose.prod.yml exec -T nginx nginx -s reload
