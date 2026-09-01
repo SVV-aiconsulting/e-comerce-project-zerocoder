@@ -32,11 +32,11 @@ async def upload_product_photo(
     photo_uploader: PhotoMessageUploader | None,
     peer_id: int,
     image_url: str,
-    backend_base_url: str,
+    media_base_url: str,
 ) -> str | None:
     if photo_uploader is None:
         return None
-    image_bytes = await load_image_bytes(image_url, backend_base_url)
+    image_bytes = await load_image_bytes(image_url, media_base_url)
     if not image_bytes:
         return None
     try:
@@ -51,7 +51,7 @@ async def send_product_card(
     product: dict,
     quantity: Decimal,
     *,
-    backend_base_url: str,
+    media_base_url: str,
     photo_uploader: PhotoMessageUploader | None = None,
 ) -> None:
     text = format_product_card(product)
@@ -60,7 +60,7 @@ async def send_product_card(
         photo_uploader,
         peer_id,
         product.get("main_image_url") or "",
-        backend_base_url,
+        media_base_url,
     )
     await send_message(api, peer_id, text, keyboard, attachment=attachment)
 
@@ -70,18 +70,18 @@ async def update_product_card_event(
     product: dict,
     quantity: Decimal,
     *,
-    backend_base_url: str = "",
+    media_base_url: str = "",
     photo_uploader: PhotoMessageUploader | None = None,
 ) -> None:
     text = format_product_card(product)
     keyboard = product_card_keyboard(product["id"], format_quantity(quantity))
     attachment = None
-    if backend_base_url:
+    if media_base_url:
         attachment = await upload_product_photo(
             photo_uploader,
             event.peer_id,
             product.get("main_image_url") or "",
-            backend_base_url,
+            media_base_url,
         )
     try:
         await event.edit_message(
@@ -90,12 +90,12 @@ async def update_product_card_event(
             attachment=attachment,
         )
     except Exception:
-        if backend_base_url:
+        if media_base_url:
             await send_product_card(
                 event.ctx_api,
                 event.peer_id,
                 product,
                 quantity,
-                backend_base_url=backend_base_url,
+                media_base_url=media_base_url,
                 photo_uploader=photo_uploader,
             )

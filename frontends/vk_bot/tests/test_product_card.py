@@ -6,10 +6,10 @@ from vk_bot.services.images import resolve_image_url
 from vk_bot.services.product_card import get_product_quantity
 
 
-def test_resolve_image_url_rewrites_docker_host():
+def test_resolve_image_url_rewrites_docker_host_to_internal_media_server():
     url = "http://web:8000/media/products/sea-urchin.jpg"
-    resolved = resolve_image_url(url, "http://localhost:8000")
-    assert resolved == "http://localhost:8000/media/products/sea-urchin.jpg"
+    resolved = resolve_image_url(url, "http://nginx:8080")
+    assert resolved == "http://nginx:8080/media/products/sea-urchin.jpg"
 
 
 def test_resolve_image_url_keeps_public_url():

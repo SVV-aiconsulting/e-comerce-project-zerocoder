@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     vk_bot_token: str
     vk_group_id: int | None = None
     backend_api_base_url: str = "http://web:8000"
+    product_media_base_url: str = ""
     adapter_api_token: str
     vk_bot_use_longpoll: bool = True
     vk_bot_log_level: str = "INFO"

@@ -42,5 +42,7 @@ async def show_catalog(
             message,
             product,
             quantity,
-            backend_base_url=settings.backend_api_base_url,
+            media_base_url=(
+                settings.product_media_base_url or settings.backend_api_base_url
+            ),
         )
