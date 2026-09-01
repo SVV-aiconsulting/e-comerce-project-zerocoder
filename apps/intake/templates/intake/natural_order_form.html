@@ -12,7 +12,7 @@
     <p class="lead">Каталог читается из общей базы WebMarket. Цена, описание и фото — те же, что в Telegram, VK и Django Admin.</p>
     <div class="hero-actions">
       <a class="btn btn-primary" href="#catalog">Смотреть каталог</a>
-      <a class="btn btn-ghost" href="#cart">Перейти в корзину</a>
+      <button class="btn btn-ghost" type="button" data-open-assistant>Спросить AI-консультанта</button>
     </div>
     <div class="hero-stats">
       <div><strong data-catalog-count>{{ catalog|length }}</strong><span>позиций в витрине</span></div>
@@ -30,8 +30,8 @@
         <p>Фото, название, цена и описание приходят из PostgreSQL через тот же каталог, что используют боты.</p>
       </article>
       <article class="usp">
-        <h2>Корзина на сервере</h2>
-        <p>Количество, суммы и оформление заказа считает backend. Браузер не хранит бизнес-логику.</p>
+        <h2>AI-консультант</h2>
+        <p>Поможет подобрать товары в чате, уточнит доставку и подготовит заказ через защищённый backend.</p>
       </article>
       <article class="usp">
         <h2>Один Admin</h2>
@@ -163,42 +163,35 @@
   </div>
 </section>
 
-<section class="section" id="order">
-  <div class="section-inner order-layout">
+<button class="assistant-fab" type="button" data-open-assistant aria-haspopup="dialog">
+  <span aria-hidden="true">✦</span> AI-консультант
+</button>
+
+<dialog class="assistant-dialog" data-assistant-dialog aria-labelledby="assistant-title">
+  <div class="assistant-dialog__header">
     <div>
-      <p class="eyebrow">Альтернатива</p>
-      <h2 class="section-title">Заказ обычным сообщением</h2>
-      <p class="lead">Можно не собирать корзину вручную: опишите заказ своими словами. AI соберёт черновик через тот же backend.</p>
+      <p class="eyebrow">WebMarket AI</p>
+      <h2 id="assistant-title">Консультант по заказу</h2>
     </div>
-    <div class="panel">
-      <form method="post" class="order-form" novalidate data-has-errors="{% if form.errors %}true{% else %}false{% endif %}">
-        {% csrf_token %}
-        {{ form.submission_id }}
-        {{ form.non_field_errors }}
-        <div class="field">
-          <label for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
-          {{ form.name.errors }}{{ form.name }}
-        </div>
-        <div class="field">
-          <label for="{{ form.phone.id_for_label }}">{{ form.phone.label }}</label>
-          {{ form.phone.errors }}{{ form.phone }}
-          <span class="helptext">{{ form.phone.help_text }}</span>
-        </div>
-        <div class="field">
-          <label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>
-          {{ form.email.errors }}{{ form.email }}
-          <span class="helptext">{{ form.email.help_text }}</span>
-        </div>
-        <div class="field">
-          <label for="{{ form.message.id_for_label }}">{{ form.message.label }}</label>
-          {{ form.message.errors }}{{ form.message }}
-        </div>
-        <div class="consent">{{ form.personal_data_consent.errors }}<label>{{ form.personal_data_consent }} {{ form.personal_data_consent.label }}</label></div>
-        <button class="btn btn-primary form-submit" type="submit">Отправить заказ</button>
-      </form>
-    </div>
+    <button class="assistant-close" type="button" data-close-assistant aria-label="Закрыть чат">×</button>
   </div>
-</section>
+  <p class="assistant-note">Подбираю товары только из каталога, а цены, доставка и оплата рассчитываются сервером.</p>
+  <div class="assistant-messages" data-assistant-messages aria-live="polite">
+    <article class="assistant-message assistant-message--assistant">
+      Здравствуйте! Напишите, что хотите заказать. Помогу подобрать товары, доставку и оплату.
+    </article>
+  </div>
+  <form class="assistant-form" data-assistant-form>
+    <label class="visually-hidden" for="assistant-message">Сообщение консультанту</label>
+    <textarea id="assistant-message" class="field-textarea" name="message" rows="3" maxlength="20000" placeholder="Например: хочу рыбу на ужин, помогите выбрать"></textarea>
+    <label class="assistant-consent">
+      <input type="checkbox" name="personal_data_consent">
+      Согласен на обработку данных, если сообщаю телефон или email
+    </label>
+    <p class="form-error" data-assistant-error hidden></p>
+    <button class="btn btn-primary form-submit" type="submit" data-assistant-submit>Отправить</button>
+  </form>
+</dialog>
 {{ catalog|json_script:"catalog-data" }}
 {% endblock %}
 

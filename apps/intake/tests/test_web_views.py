@@ -1,5 +1,4 @@
 import json
-import uuid
 
 from django.core.management import call_command
 
@@ -9,7 +8,7 @@ from apps.catalog.models import Product
 from apps.common.enums import Channel
 from apps.customers.services import CustomerService
 from apps.intake.enums import InboundEventStatus, OrderDraftStatus
-from apps.intake.models import Clarification, InboundEvent
+from apps.intake.models import Clarification, InboundEvent, OrderDraft
 from apps.intake.services import InboundEventService
 from apps.orders.models import Order
 
@@ -20,44 +19,43 @@ def publish_stub(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_natural_order_form_registers_customer_and_enqueues_event(client, publish_stub):
+def test_website_assistant_registers_customer_and_enqueues_event(client, publish_stub):
     response = client.post(
-        "/",
-        {
-            "submission_id": str(uuid.uuid4()),
-            "name": "Анна Покупатель",
-            "phone": "+7 999 123-45-67",
-            "email": "anna@example.com",
-            "message": "Две упаковки креветок, самовывоз",
-            "personal_data_consent": "on",
-        },
+        "/store/assistant/messages/",
+        data=json.dumps(
+            {
+                "message": (
+                    "Две упаковки креветок, самовывоз. "
+                    "Мой номер +7 999 123-45-67, email anna@example.com"
+                ),
+                "personal_data_consent": True,
+            }
+        ),
+        content_type="application/json",
     )
 
-    assert response.status_code == 302
+    assert response.status_code == 202
     event = InboundEvent.objects.select_related("customer").get()
     assert event.channel == Channel.WEBSITE
     assert event.status == InboundEventStatus.QUEUED
     assert event.customer.phone == "79991234567"
     assert event.customer.email == "anna@example.com"
     assert event.customer.personal_data_consent is True
-    assert response.url.endswith(f"/order-assistant/{event.public_id}/")
+    assert event.raw_payload["source"] == "website_ai_assistant"
+    assert response.json()["event_id"] == str(event.public_id)
 
 
 @pytest.mark.django_db
-def test_web_status_is_session_bound_and_returns_clarification(client, publish_stub):
-    client.post(
-        "/",
-        {
-            "submission_id": str(uuid.uuid4()),
-            "name": "Анна Покупатель",
-            "phone": "+7 999 123-45-67",
-            "email": "anna@example.com",
-            "message": "Хочу рыбу",
-            "personal_data_consent": "on",
-        },
+def test_website_assistant_event_is_session_bound_and_returns_clarification(
+    client, publish_stub
+):
+    response = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Хочу рыбу"}),
+        content_type="application/json",
     )
-    event = InboundEvent.objects.select_related("customer").get()
-    draft = event.customer.order_drafts.create(
+    event = InboundEvent.objects.get()
+    draft = OrderDraft.objects.create(
         channel=Channel.WEBSITE,
         external_user_id=event.external_user_id,
         conversation_key=event.conversation_key,
@@ -74,9 +72,9 @@ def test_web_status_is_session_bound_and_returns_clarification(client, publish_s
         trigger_event=event,
     )
 
-    status = client.get(f"/order-assistant/{event.public_id}/?format=json")
+    status = client.get(f"/store/assistant/events/{event.public_id}/")
     stranger = client.__class__().get(
-        f"/order-assistant/{event.public_id}/?format=json"
+        f"/store/assistant/events/{event.public_id}/"
     )
 
     assert status.status_code == 200
@@ -85,7 +83,7 @@ def test_web_status_is_session_bound_and_returns_clarification(client, publish_s
 
 
 @pytest.mark.django_db
-def test_web_form_links_order_to_existing_customer_by_email(client, publish_stub):
+def test_website_assistant_links_order_to_existing_customer_by_email(client, publish_stub):
     customer = CustomerService.create_customer(
         name="Анна из CRM",
         email="anna@example.com",
@@ -93,18 +91,17 @@ def test_web_form_links_order_to_existing_customer_by_email(client, publish_stub
     )
 
     response = client.post(
-        "/",
-        {
-            "submission_id": str(uuid.uuid4()),
-            "name": "Анна Покупатель",
-            "phone": "",
-            "email": "ANNA@example.com",
-            "message": "Одна упаковка креветок, самовывоз",
-            "personal_data_consent": "on",
-        },
+        "/store/assistant/messages/",
+        data=json.dumps(
+            {
+                "message": "Одна упаковка креветок, самовывоз. Email: ANNA@example.com",
+                "personal_data_consent": True,
+            }
+        ),
+        content_type="application/json",
     )
 
-    assert response.status_code == 302
+    assert response.status_code == 202
     event = InboundEvent.objects.select_related("customer").get()
     assert event.customer == customer
     assert event.external_user_id.startswith("web:")
@@ -112,10 +109,25 @@ def test_web_form_links_order_to_existing_customer_by_email(client, publish_stub
 
 
 @pytest.mark.django_db
+def test_website_assistant_requires_consent_before_storing_contact(client, publish_stub):
+    response = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Мой телефон +7 999 123-45-67"}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert InboundEvent.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_storefront_page_renders_without_catalog(client):
     response = client.get("/")
     assert response.status_code == 200
-    assert "Каталог морепродуктов" in response.content.decode()
+    content = response.content.decode()
+    assert "Каталог морепродуктов" in content
+    assert 'data-assistant-dialog' in content
+    assert "Заказ обычным сообщением" not in content
 
 
 @pytest.mark.django_db

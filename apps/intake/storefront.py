@@ -1,10 +1,12 @@
 """Сессия сайта и JSON-адаптер витрины без публикации adapter token."""
 import json
+import re
 import uuid
 from decimal import Decimal, InvalidOperation
 
 from django.core.exceptions import ValidationError
 from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -24,9 +26,18 @@ from apps.orders.pricing import OrderTotals, PricingService
 from apps.orders.services import OrderService
 from apps.payments.exceptions import PaymentError
 from apps.payments.services import PaymentService
+from apps.intake.enums import InboundEventKind
+from apps.intake.models import InboundEvent
+from apps.intake.responses import InboundEventResponseService
+from apps.intake.services import InboundEventService
 
 SESSION_USER_KEY = "website_external_user_id"
 SESSION_CUSTOMER_KEY = "website_customer_id"
+ASSISTANT_MESSAGE_MAX_LENGTH = 20_000
+PHONE_IN_TEXT_RE = re.compile(r"(?<!\d)(?:\+7|7|8)[\s().-]*\d(?:[\s().-]*\d){9}(?!\d)")
+EMAIL_IN_TEXT_RE = re.compile(
+    r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.+-])"
+)
 
 
 def get_or_create_website_user_id(request) -> str:
@@ -77,6 +88,26 @@ def parse_json(request) -> dict:
 
 def session_customer(request) -> Customer | None:
     return Customer.objects.filter(pk=request.session.get(SESSION_CUSTOMER_KEY)).first()
+
+
+def contacts_from_message(message: str) -> tuple[str, str]:
+    """Извлечь только явно написанные в сообщении контакты для CRM-идентификации."""
+    phone = ""
+    email = ""
+    phone_match = PHONE_IN_TEXT_RE.search(message)
+    if phone_match:
+        try:
+            phone = normalize_phone(phone_match.group(0))
+            validate_phone(phone)
+        except ValidationError:
+            phone = ""
+    email_match = EMAIL_IN_TEXT_RE.search(message)
+    if email_match:
+        try:
+            email = normalize_email(email_match.group(0))
+        except ValidationError:
+            email = ""
+    return phone, email
 
 
 def identify_from_payload(request, payload: dict):
@@ -245,3 +276,94 @@ class WebsiteCreateOrderView(WebsiteApiView):
         data = OrderSerializer(order).data
         data["confirmation_url"] = confirmation_url
         return JsonResponse(data, status=201)
+
+
+class WebsiteAssistantMessageView(WebsiteApiView):
+    """Публичный browser-safe вход в существующий AI order pipeline."""
+
+    def post(self, request):
+        payload = parse_json(request)
+        message = str(payload.get("message") or "").strip()
+        if not message:
+            return json_error("Напишите сообщение для консультанта.")
+        if len(message) > ASSISTANT_MESSAGE_MAX_LENGTH:
+            return json_error("Сообщение слишком длинное.")
+
+        customer = session_customer(request)
+        phone, email = contacts_from_message(message)
+        if phone or email:
+            if not payload.get("personal_data_consent"):
+                return json_error(
+                    "Отметьте согласие на обработку данных, чтобы передать контакты для заказа."
+                )
+            identity = CustomerService.resolve_website_customer(
+                name="Покупатель",
+                phone=phone,
+                email=email,
+                external_user_id=get_or_create_website_user_id(request),
+            )
+            customer = identity.customer
+            if customer is None:
+                return json_error("Не удалось идентифицировать клиента.")
+            if not customer.personal_data_consent:
+                customer.personal_data_consent = True
+                customer.save(update_fields=["personal_data_consent", "updated_at"])
+            request.session[SESSION_CUSTOMER_KEY] = customer.pk
+
+        external_user_id = get_or_create_website_user_id(request)
+        registration = InboundEventService.register(
+            channel=Channel.WEBSITE,
+            external_event_id=str(uuid.uuid4()),
+            external_user_id=external_user_id,
+            conversation_key=external_user_id,
+            customer=customer,
+            kind=InboundEventKind.MESSAGE,
+            raw_text=message,
+            raw_payload={
+                "source": "website_ai_assistant",
+                "contact_phone": phone or (customer.phone if customer else ""),
+                "contact_email": email or (customer.email if customer else ""),
+            },
+        )
+        InboundEventService.enqueue(registration.event)
+        return JsonResponse(
+            {"event_id": str(registration.event.public_id), "status": registration.event.status},
+            status=202,
+        )
+
+
+class WebsiteAssistantEventView(WebsiteApiView):
+    def get(self, request, event_id):
+        event = get_object_or_404(
+            InboundEvent.objects.select_related("draft__converted_order"),
+            public_id=event_id,
+            channel=Channel.WEBSITE,
+            external_user_id=get_or_create_website_user_id(request),
+        )
+        return JsonResponse(InboundEventResponseService.present(event))
+
+
+class WebsiteAssistantHistoryView(WebsiteApiView):
+    def get(self, request):
+        events = (
+            InboundEvent.objects.select_related("draft__converted_order")
+            .filter(
+                channel=Channel.WEBSITE,
+                external_user_id=get_or_create_website_user_id(request),
+            )
+            .order_by("created_at")[:30]
+        )
+        messages = []
+        for event in events:
+            messages.append({"role": "user", "message": event.raw_text})
+            payload = InboundEventResponseService.present(event)
+            response = payload.get("response")
+            if payload["complete"] and response:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "message": response["message"],
+                        "action_url": response.get("action_url", ""),
+                    }
+                )
+        return JsonResponse({"messages": messages})

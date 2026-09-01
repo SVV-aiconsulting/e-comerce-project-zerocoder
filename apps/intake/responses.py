@@ -20,6 +20,7 @@ class ChannelResponse:
     response_id: str
     type: str
     message: str
+    action_url: str = ""
 
 
 class InboundEventResponseService:
@@ -49,6 +50,7 @@ class InboundEventResponseService:
                 "id": response.response_id,
                 "type": response.type,
                 "message": response.message,
+                "action_url": response.action_url,
             }
         return payload
 
@@ -104,6 +106,7 @@ class InboundEventResponseService:
                         f"Итого: {order.total_amount} ₽. "
                         f"Оплатите по ссылке: {payment.confirmation_url}"
                     ),
+                    action_url=payment.confirmation_url,
                 )
             return ChannelResponse(
                 response_id=f"order:{order.public_number}",

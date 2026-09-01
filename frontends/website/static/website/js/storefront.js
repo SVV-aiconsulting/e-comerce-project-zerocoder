@@ -157,6 +157,16 @@
   }
 
   document.addEventListener("click", async (event) => {
+    if (event.target.closest("[data-open-assistant]")) {
+      openAssistant();
+      return;
+    }
+
+    if (event.target.closest("[data-close-assistant]")) {
+      closeAssistant();
+      return;
+    }
+
     const step = event.target.closest("[data-qty-step]");
     if (step) {
       const card = step.closest("[data-product-id]");
@@ -257,10 +267,117 @@
     }
   });
 
-  const aiForm = document.querySelector(".order-form");
-  if (aiForm?.dataset.hasErrors === "true") {
-    document.querySelector("#order")?.scrollIntoView();
+  const assistantDialog = document.querySelector("[data-assistant-dialog]");
+  const assistantMessages = document.querySelector("[data-assistant-messages]");
+  const assistantForm = document.querySelector("[data-assistant-form]");
+  const assistantError = document.querySelector("[data-assistant-error]");
+  const assistantSubmit = document.querySelector("[data-assistant-submit]");
+  let assistantHistoryLoaded = false;
+
+  function appendAssistantMessage(role, message, actionUrl = "") {
+    if (!assistantMessages) return;
+    const item = document.createElement("article");
+    item.className = `assistant-message assistant-message--${role}`;
+    const text = document.createElement("p");
+    text.textContent = message;
+    item.append(text);
+    if (role === "assistant" && actionUrl) {
+      try {
+        const url = new URL(actionUrl, window.location.origin);
+        if (url.protocol === "https:") {
+          const link = document.createElement("a");
+          link.className = "btn btn-primary assistant-payment-link";
+          link.href = url.href;
+          link.textContent = "Перейти к оплате";
+          item.append(link);
+        }
+      } catch (_error) {
+        /* Сервер не отдаёт некорректный URL как действие. */
+      }
+    }
+    assistantMessages.append(item);
+    assistantMessages.scrollTop = assistantMessages.scrollHeight;
   }
+
+  async function loadAssistantHistory() {
+    if (assistantHistoryLoaded || !assistantMessages) return;
+    const history = await request("/store/assistant/history/");
+    if (history.messages?.length) {
+      assistantMessages.innerHTML = "";
+      history.messages.forEach((item) =>
+        appendAssistantMessage(item.role, item.message, item.action_url)
+      );
+    }
+    assistantHistoryLoaded = true;
+  }
+
+  async function openAssistant() {
+    if (!assistantDialog) return;
+    if (!assistantDialog.open) assistantDialog.showModal();
+    try {
+      await loadAssistantHistory();
+    } catch (_error) {
+      appendAssistantMessage(
+        "assistant",
+        "Историю пока не удалось загрузить. Можете начать новый вопрос."
+      );
+    }
+    assistantForm?.message.focus();
+  }
+
+  function closeAssistant() {
+    assistantDialog?.close();
+  }
+
+  async function waitForAssistantEvent(eventId) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const state = await request(`/store/assistant/events/${eventId}/`);
+      if (state.complete) {
+        appendAssistantMessage(
+          "assistant",
+          state.response?.message || "Сообщение обработано. Уточните, если хотите продолжить.",
+          state.response?.action_url
+        );
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+    }
+    appendAssistantMessage(
+      "assistant",
+      "Обработка продолжается. Оставьте чат открытым или вернитесь через минуту."
+    );
+  }
+
+  assistantForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const message = assistantForm.message.value.trim();
+    if (!message) return;
+    assistantError.hidden = true;
+    assistantSubmit.disabled = true;
+    appendAssistantMessage("user", message);
+    assistantForm.message.value = "";
+    try {
+      const created = await request("/store/assistant/messages/", {
+        method: "POST",
+        body: JSON.stringify({
+          message,
+          personal_data_consent: assistantForm.personal_data_consent.checked,
+        }),
+      });
+      await waitForAssistantEvent(created.event_id);
+      assistantHistoryLoaded = false;
+    } catch (error) {
+      assistantError.hidden = false;
+      assistantError.textContent = error.message;
+    } finally {
+      assistantSubmit.disabled = false;
+      assistantForm.message.focus();
+    }
+  });
+
+  assistantDialog?.addEventListener("click", (event) => {
+    if (event.target === assistantDialog) closeAssistant();
+  });
 
   loadCatalogFromBackend();
   refreshCart().then(refreshPreview).catch(() => undefined);

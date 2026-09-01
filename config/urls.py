@@ -5,6 +5,9 @@ from django.contrib import admin
 from django.urls import include, path
 
 from apps.intake.storefront import (
+    WebsiteAssistantEventView,
+    WebsiteAssistantHistoryView,
+    WebsiteAssistantMessageView,
     WebsiteCartClearView,
     WebsiteCartItemView,
     WebsiteCartView,
@@ -30,6 +33,21 @@ urlpatterns = [
         name="website-checkout-preview",
     ),
     path("store/orders/", WebsiteCreateOrderView.as_view(), name="website-order-create"),
+    path(
+        "store/assistant/messages/",
+        WebsiteAssistantMessageView.as_view(),
+        name="website-assistant-message",
+    ),
+    path(
+        "store/assistant/events/<uuid:event_id>/",
+        WebsiteAssistantEventView.as_view(),
+        name="website-assistant-event",
+    ),
+    path(
+        "store/assistant/history/",
+        WebsiteAssistantHistoryView.as_view(),
+        name="website-assistant-history",
+    ),
     path(
         "order-assistant/<uuid:event_id>/",
         NaturalOrderStatusView.as_view(),
