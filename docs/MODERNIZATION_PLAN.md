@@ -379,6 +379,12 @@ threads, Celery intake-worker — с `concurrency=1`, а активные кон
 сохраняется в profile `vk`. Настройки Django, Celery в Python, локальный Compose,
 workflow CI/CD и конфигурация PostgreSQL не изменялись.
 
+Уточнение resource profile от 01.09.2026: те же CPU/RAM-границы продублированы
+в стандартном `deploy.resources.limits` Docker Compose для ключевых сервисов.
+Лимиты согласованы с `mem_limit`/`cpus`, поэтому они не конфликтуют между собой.
+Период HTTP health-check у `web` и `nginx` увеличен с 10 до 30 секунд, что снижает
+фоновую активность без изменения readiness при старте.
+
 ## 5. Приоритеты
 
 ### Must have
