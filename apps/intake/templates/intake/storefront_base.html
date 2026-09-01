@@ -24,7 +24,7 @@
       <nav class="nav" aria-label="Разделы сайта">
         <a class="nav-link" href="{% url 'natural-order' %}#catalog">Каталог</a>
         <a class="nav-link" href="{% url 'natural-order' %}#cart">Корзина</a>
-        <a class="nav-link" href="{% url 'natural-order' %}#order">AI-заказ</a>
+        <button type="button" class="nav-link nav-link--button" data-open-assistant>AI-консультант</button>
         <button type="button" class="btn btn-ghost cart-toggle" data-open-cart>
           Корзина <span class="cart-badge" data-cart-count>0</span>
         </button>
@@ -40,7 +40,7 @@
       </div>
       <div>
         <p>Также принимаем заказы в Telegram и VK.</p>
-        <p><a href="{% url 'natural-order' %}#order">webmarket.apernova.ru</a></p>
+        <p><button type="button" class="footer-assistant-link" data-open-assistant>Открыть AI-консультанта</button></p>
       </div>
     </div>
   </footer>

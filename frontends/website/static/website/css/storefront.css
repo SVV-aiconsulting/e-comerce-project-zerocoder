@@ -123,13 +123,17 @@ textarea {
   gap: 22px;
 }
 
-.nav a {
+.nav-link {
   color: var(--foam);
+  border: 0;
+  padding: 0;
+  background: transparent;
   text-decoration: none;
   font-size: 0.95rem;
+  cursor: pointer;
 }
 
-.nav a:hover {
+.nav-link:hover {
   color: var(--ice);
 }
 
@@ -524,6 +528,142 @@ textarea {
   margin-top: 8px;
 }
 
+.assistant-fab {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  z-index: 9;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  padding: 14px 18px;
+  background: var(--coral);
+  color: #1a0904;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), 0 10px 24px rgba(255, 107, 61, 0.28);
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.assistant-dialog {
+  width: min(560px, calc(100% - 28px));
+  max-height: min(720px, calc(100dvh - 28px));
+  padding: 0;
+  overflow: hidden;
+  color: var(--foam);
+  background: #08131d;
+  border: 1px solid rgba(201, 230, 239, 0.26);
+  border-radius: 26px;
+  box-shadow: var(--shadow);
+}
+
+.assistant-dialog::backdrop {
+  background: rgba(2, 5, 9, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.assistant-dialog__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 22px 24px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.assistant-dialog__header h2 {
+  margin: 3px 0 0;
+  font-family: var(--font-serif);
+  font-size: 1.55rem;
+}
+
+.assistant-close {
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--foam);
+  font-size: 1.6rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.assistant-note {
+  margin: 0;
+  padding: 13px 24px;
+  color: var(--mist);
+  font-size: 0.84rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.assistant-messages {
+  display: flex;
+  min-height: 240px;
+  max-height: min(390px, 44dvh);
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 18px 24px;
+  scrollbar-color: var(--slate) transparent;
+}
+
+.assistant-message {
+  width: fit-content;
+  max-width: 88%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px 16px 16px 4px;
+  background: rgba(21, 37, 54, 0.82);
+  color: var(--foam);
+}
+
+.assistant-message p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.assistant-message--user {
+  align-self: flex-end;
+  border-color: rgba(255, 107, 61, 0.3);
+  border-radius: 16px 16px 4px 16px;
+  background: rgba(255, 107, 61, 0.14);
+}
+
+.assistant-payment-link {
+  margin-top: 12px;
+  padding: 9px 14px;
+  font-size: 0.9rem;
+}
+
+.assistant-form {
+  padding: 14px 24px 24px;
+  border-top: 1px solid var(--line);
+}
+
+.assistant-form .field-textarea {
+  min-height: 86px;
+}
+
+.assistant-consent {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin-top: 10px;
+  color: var(--mist);
+  font-size: 0.79rem;
+}
+
+.footer-assistant-link {
+  border: 0;
+  padding: 0;
+  color: var(--ice);
+  background: transparent;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .status-card {
   width: min(720px, calc(100% - 36px));
   margin: 56px auto 80px;
@@ -671,7 +811,6 @@ textarea {
 }
 
 #catalog,
-#order,
 #contacts {
   scroll-margin-top: calc(var(--header-h) + 16px);
 }
@@ -693,6 +832,19 @@ textarea {
 }
 
 @media (max-width: 640px) {
+  .assistant-fab {
+    right: 16px;
+    bottom: 16px;
+  }
+
+  .assistant-dialog__header,
+  .assistant-note,
+  .assistant-messages,
+  .assistant-form {
+    padding-left: 18px;
+    padding-right: 18px;
+  }
+
   .catalog-grid,
   .usp-grid {
     grid-template-columns: 1fr;

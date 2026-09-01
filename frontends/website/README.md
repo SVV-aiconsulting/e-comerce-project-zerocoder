@@ -9,7 +9,9 @@
 - Каталог: `CatalogService` / `GET /api/products/` — те же активные товары, что в Telegram и VK.
 - Фото и описания: `catalog_product` + `catalog_productimage` в PostgreSQL. Правка в Django Admin сразу видна во всех каналах.
 - Корзина и заказ: `CartService` и `OrderService` через сессионные URL `/store/*` (CSRF, без токена в JavaScript).
-- AI-форма остаётся вторым способом заказа: тот же `InboundEventService`.
+- AI-консультант — второй способ заказа: popup отправляет реплики в защищённые
+  `/store/assistant/*` endpoints, а тот же `InboundEventService` ведёт диалог,
+  уточнения, доставку, подтверждение и оплату.
 
 Статичные JPEG в `static/website/catalog/` — только заготовка для `load_demo_data`. Витрина их не подменяет, если в админке другое фото.
 
