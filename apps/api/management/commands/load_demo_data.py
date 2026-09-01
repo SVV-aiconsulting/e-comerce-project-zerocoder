@@ -22,6 +22,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("1500.00"),
                 "sort_order": 1,
+                "delivery_weight_grams": 300,
+                "delivery_length_cm": 12,
+                "delivery_width_cm": 12,
+                "delivery_height_cm": 12,
             },
             {
                 "public_code": "DEMO-URCHIN-CLEAN",
@@ -31,6 +35,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("2200.00"),
                 "sort_order": 2,
+                "delivery_weight_grams": 150,
+                "delivery_length_cm": 12,
+                "delivery_width_cm": 12,
+                "delivery_height_cm": 5,
             },
             {
                 "public_code": "DEMO-SET",
@@ -40,6 +48,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("3500.00"),
                 "sort_order": 3,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 30,
+                "delivery_width_cm": 20,
+                "delivery_height_cm": 15,
             },
             {
                 "public_code": "DEMO-SALMON",
@@ -49,6 +61,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("0.5"),
                 "base_price": Decimal("1800.00"),
                 "sort_order": 4,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 35,
+                "delivery_width_cm": 25,
+                "delivery_height_cm": 7,
                 "aliases": ["сёмга", "семга", "рыба", "красная рыба"],
             },
             {
@@ -59,6 +75,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("0.5"),
                 "base_price": Decimal("950.00"),
                 "sort_order": 5,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 35,
+                "delivery_width_cm": 25,
+                "delivery_height_cm": 7,
                 "aliases": ["рыба", "белая рыба", "филе трески"],
             },
             {
@@ -69,6 +89,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("1250.00"),
                 "sort_order": 6,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 25,
+                "delivery_width_cm": 18,
+                "delivery_height_cm": 6,
                 "aliases": ["креветки", "тигровые креветки", "креветка"],
             },
             {
@@ -79,6 +103,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("1900.00"),
                 "sort_order": 7,
+                "delivery_weight_grams": 500,
+                "delivery_length_cm": 20,
+                "delivery_width_cm": 15,
+                "delivery_height_cm": 5,
                 "aliases": ["гребешок", "морской гребешок"],
             },
             {
@@ -89,6 +117,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("690.00"),
                 "sort_order": 8,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 30,
+                "delivery_width_cm": 20,
+                "delivery_height_cm": 10,
                 "aliases": ["мидии", "мидия"],
             },
             {
@@ -99,6 +131,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("780.00"),
                 "sort_order": 9,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 25,
+                "delivery_width_cm": 18,
+                "delivery_height_cm": 6,
                 "aliases": ["кальмар", "кальмары"],
             },
             {
@@ -109,6 +145,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("0.5"),
                 "base_price": Decimal("1450.00"),
                 "sort_order": 10,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 40,
+                "delivery_width_cm": 25,
+                "delivery_height_cm": 8,
                 "aliases": ["форель", "рыба", "красная рыба"],
             },
             {
@@ -119,6 +159,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("0.5"),
                 "base_price": Decimal("890.00"),
                 "sort_order": 11,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 40,
+                "delivery_width_cm": 30,
+                "delivery_height_cm": 6,
                 "aliases": ["камбала", "рыба"],
             },
             {
@@ -129,6 +173,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("3200.00"),
                 "sort_order": 12,
+                "delivery_weight_grams": 250,
+                "delivery_length_cm": 12,
+                "delivery_width_cm": 12,
+                "delivery_height_cm": 8,
                 "aliases": ["икра", "красная икра", "лососёвая икра"],
             },
             {
@@ -139,6 +187,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("4500.00"),
                 "sort_order": 13,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 35,
+                "delivery_width_cm": 25,
+                "delivery_height_cm": 10,
                 "aliases": ["краб", "крабовое мясо", "камчатский краб"],
             },
             {
@@ -149,6 +201,10 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("1"),
                 "base_price": Decimal("1750.00"),
                 "sort_order": 14,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 25,
+                "delivery_width_cm": 18,
+                "delivery_height_cm": 6,
                 "aliases": ["осьминог", "осьминоги"],
             },
             {
@@ -159,11 +215,22 @@ class Command(BaseCommand):
                 "min_quantity": Decimal("0.5"),
                 "base_price": Decimal("2100.00"),
                 "sort_order": 15,
+                "delivery_weight_grams": 1000,
+                "delivery_length_cm": 30,
+                "delivery_width_cm": 20,
+                "delivery_height_cm": 6,
                 "aliases": ["тунец", "рыба"],
             },
         ]
 
+        delivery_fields = (
+            "delivery_weight_grams",
+            "delivery_length_cm",
+            "delivery_width_cm",
+            "delivery_height_cm",
+        )
         for data in products_data:
+            delivery_defaults = {field: data[field] for field in delivery_fields}
             product, created = Product.objects.get_or_create(
                 public_code=data["public_code"],
                 defaults={
@@ -174,8 +241,18 @@ class Command(BaseCommand):
                     "base_price": data["base_price"],
                     "sort_order": data["sort_order"],
                     "is_active": True,
+                    **delivery_defaults,
                 },
             )
+            changed_delivery_fields = [
+                field
+                for field, value in delivery_defaults.items()
+                if getattr(product, field) != value
+            ]
+            if changed_delivery_fields:
+                for field in changed_delivery_fields:
+                    setattr(product, field, delivery_defaults[field])
+                product.save(update_fields=changed_delivery_fields)
             for alias in data.get("aliases", []):
                 ProductAlias.objects.get_or_create(
                     product=product,
