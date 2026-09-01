@@ -1,12 +1,17 @@
+import json
 import uuid
+
+from django.core.management import call_command
 
 import pytest
 
+from apps.catalog.models import Product
 from apps.common.enums import Channel
 from apps.customers.services import CustomerService
 from apps.intake.enums import InboundEventStatus, OrderDraftStatus
 from apps.intake.models import Clarification, InboundEvent
 from apps.intake.services import InboundEventService
+from apps.orders.models import Order
 
 
 @pytest.fixture
@@ -104,3 +109,81 @@ def test_web_form_links_order_to_existing_customer_by_email(client, publish_stub
     assert event.customer == customer
     assert event.external_user_id.startswith("web:")
     assert not event.customer.channel_identities.filter(channel=Channel.WEBSITE).exists()
+
+
+@pytest.mark.django_db
+def test_storefront_page_renders_without_catalog(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "Каталог морепродуктов" in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_storefront_renders_catalog_from_demo_data(client):
+    call_command("load_demo_data")
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "Каталог морепродуктов" in content
+    assert "Лосось" in content
+    assert "Икра лососёвая" in content
+    assert 'id="catalog"' in content
+    assert 'data-add-to-cart' in content
+    salmon = Product.objects.get(public_code="DEMO-SALMON")
+    assert f'data-product-id="{salmon.id}"' in content
+    assert "website/catalog/DEMO-SALMON.jpg" not in content
+
+
+@pytest.mark.django_db
+def test_storefront_shows_admin_catalog_edits(client):
+    call_command("load_demo_data")
+    Product.objects.filter(public_code="DEMO-SALMON").update(
+        name="Сёмга атлантическая",
+        description="Карточка обновлена в Django Admin",
+    )
+
+    page = client.get("/")
+    api = client.get("/api/products/")
+
+    assert "Сёмга атлантическая" in page.content.decode()
+    assert "Карточка обновлена в Django Admin" in page.content.decode()
+    salmon = next(item for item in api.json() if item["public_code"] == "DEMO-SALMON")
+    assert salmon["name"] == "Сёмга атлантическая"
+    assert salmon["description"] == "Карточка обновлена в Django Admin"
+
+
+@pytest.mark.django_db
+def test_website_cart_and_checkout_go_through_backend(client):
+    call_command("load_demo_data")
+    product = Product.objects.get(public_code="DEMO-SALMON")
+
+    added = client.put(
+        f"/store/cart/items/{product.id}/",
+        data=json.dumps({"quantity": "0.5"}),
+        content_type="application/json",
+    )
+    cart = client.get("/store/cart/")
+    created = client.post(
+        "/store/orders/",
+        data=json.dumps(
+            {
+                "name": "Анна Покупатель",
+                "phone": "+7 999 123-45-67",
+                "email": "anna@example.com",
+                "receiving_type": "pickup",
+                "payment_method": "cash_on_delivery",
+                "personal_data_consent": True,
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert added.status_code == 200
+    assert added.json()["items"][0]["product"]["id"] == product.id
+    assert cart.json()["items"]
+    assert created.status_code == 201
+    order = Order.objects.get(public_number=created.json()["public_number"])
+    assert order.channel == Channel.WEBSITE
+    assert order.items.get().product == product

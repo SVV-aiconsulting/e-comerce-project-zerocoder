@@ -4,8 +4,12 @@ import uuid
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.generic import FormView, TemplateView
 
+from apps.api.serializers.catalog import ProductListSerializer
+from apps.catalog.services import CatalogService
 from apps.common.enums import Channel
 from apps.customers.models import Customer
 from apps.customers.services import CustomerService
@@ -13,28 +17,40 @@ from apps.intake.forms import NaturalOrderForm
 from apps.intake.models import InboundEvent
 from apps.intake.responses import InboundEventResponseService
 from apps.intake.services import InboundEventService
+from apps.intake.storefront import SESSION_CUSTOMER_KEY, get_or_create_website_user_id
 
 
-def _website_submission_identity(submission_id) -> str:
-    """Технический ключ обращения, не идентификатор клиента CRM."""
-    return f"web:{submission_id}"
-
-
+@method_decorator(ensure_csrf_cookie, name="dispatch")
 class NaturalOrderView(FormView):
     template_name = "intake/natural_order_form.html"
     form_class = NaturalOrderForm
 
+    def get_context_data(self, **kwargs):
+        get_or_create_website_user_id(self.request)
+        context = super().get_context_data(**kwargs)
+        products = CatalogService.get_active_products()
+        serializer = ProductListSerializer(
+            products, many=True, context={"request": self.request}
+        )
+        catalog = [dict(item) for item in serializer.data]
+        context["catalog"] = catalog
+        context["hero_image"] = next(
+            (item["main_image_url"] for item in catalog if item.get("main_image_url")),
+            "",
+        )
+        return context
+
     def get_initial(self):
         initial = super().get_initial()
         initial["submission_id"] = uuid.uuid4()
-        customer_id = self.request.session.get("website_customer_id")
+        customer_id = self.request.session.get(SESSION_CUSTOMER_KEY)
         customer = Customer.objects.filter(pk=customer_id).first()
         if customer is not None:
             initial.update(name=customer.name, phone=customer.phone, email=customer.email)
         return initial
 
     def form_valid(self, form):
-        external_user_id = _website_submission_identity(form.cleaned_data["submission_id"])
+        external_user_id = get_or_create_website_user_id(self.request)
         identity = CustomerService.resolve_website_customer(
             external_user_id=external_user_id,
             phone=form.cleaned_data["phone"],
@@ -64,8 +80,7 @@ class NaturalOrderView(FormView):
             },
         )
         InboundEventService.enqueue(registration.event)
-        self.request.session["website_external_user_id"] = external_user_id
-        self.request.session["website_customer_id"] = customer.pk
+        self.request.session[SESSION_CUSTOMER_KEY] = customer.pk
         return redirect(
             reverse("natural-order-status", kwargs={"event_id": registration.event.public_id})
         )

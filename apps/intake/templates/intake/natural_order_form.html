@@ -1,47 +1,209 @@
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Заказ — WebMarket</title>
-  <style>
-    :root { color-scheme: light; font-family: Inter, system-ui, sans-serif; }
-    body { margin: 0; background: #f3f6f2; color: #183128; }
-    main { width: min(680px, calc(100% - 32px)); margin: 48px auto; }
-    .card { background: white; border-radius: 20px; padding: 32px; box-shadow: 0 18px 50px #173c2a18; }
-    h1 { margin-top: 0; font-size: clamp(28px, 6vw, 44px); line-height: 1.05; }
-    .lead { color: #52655d; line-height: 1.55; }
-    label { display: block; margin: 20px 0 7px; font-weight: 650; }
-    input[type=text], input[type=email], textarea { width: 100%; box-sizing: border-box; padding: 13px 14px; border: 1px solid #b9c8c0; border-radius: 10px; font: inherit; }
-    textarea { resize: vertical; }
-    .helptext { display: block; color: #66756e; font-size: 14px; margin-top: 5px; }
-    .errorlist { color: #a32929; padding-left: 20px; }
-    .consent label { display: flex; gap: 10px; align-items: flex-start; font-weight: 500; }
-    button { width: 100%; margin-top: 24px; border: 0; border-radius: 12px; padding: 15px; background: #176b45; color: white; font: inherit; font-weight: 700; cursor: pointer; }
-    button:hover { background: #105537; }
-  </style>
-</head>
-<body>
-<main>
-  <section class="card">
-    <h1>Заказ обычным сообщением</h1>
-    <p class="lead">Опишите товары, количество, доставку и оплату своими словами. AI соберёт черновик и задаст только необходимые вопросы.</p>
-    <form method="post" novalidate>
-      {% csrf_token %}
-      {{ form.submission_id }}
-      {{ form.non_field_errors }}
-      <label for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
-      {{ form.name.errors }}{{ form.name }}
-      <label for="{{ form.phone.id_for_label }}">{{ form.phone.label }}</label>
-      {{ form.phone.errors }}{{ form.phone }}<span class="helptext">{{ form.phone.help_text }}</span>
-      <label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>
-      {{ form.email.errors }}{{ form.email }}<span class="helptext">{{ form.email.help_text }}</span>
-      <label for="{{ form.message.id_for_label }}">{{ form.message.label }}</label>
-      {{ form.message.errors }}{{ form.message }}
-      <div class="consent">{{ form.personal_data_consent.errors }}<label>{{ form.personal_data_consent }} {{ form.personal_data_consent.label }}</label></div>
-      <button type="submit">Отправить заказ</button>
-    </form>
-  </section>
-</main>
-</body>
-</html>
+{% extends "intake/storefront_base.html" %}
+{% load static %}
+
+{% block content %}
+<section class="hero">
+  {% if hero_image %}
+  <div class="hero-media" aria-hidden="true">
+    <img src="{{ hero_image }}" alt="" width="1600" height="1200">
+  </div>
+  {% endif %}
+  <div class="hero-copy">
+    <p class="eyebrow">Охлаждённый улов</p>
+    <h1>С глубины моря — к вашему столу</h1>
+    <p class="lead">Каталог читается из общей базы WebMarket. Цена, описание и фото — те же, что в Telegram, VK и Django Admin.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#catalog">Смотреть каталог</a>
+      <a class="btn btn-ghost" href="#cart">Перейти в корзину</a>
+    </div>
+    <div class="hero-stats">
+      <div><strong data-catalog-count>{{ catalog|length }}</strong><span>позиций в витрине</span></div>
+      <div><strong>1</strong><span>каталог на все каналы</span></div>
+      <div><strong>API</strong><span>корзина через backend</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="usp-grid">
+      <article class="usp">
+        <h2>Карточки из базы</h2>
+        <p>Фото, название, цена и описание приходят из PostgreSQL через тот же каталог, что используют боты.</p>
+      </article>
+      <article class="usp">
+        <h2>Корзина на сервере</h2>
+        <p>Количество, суммы и оформление заказа считает backend. Браузер не хранит бизнес-логику.</p>
+      </article>
+      <article class="usp">
+        <h2>Один Admin</h2>
+        <p>Изменили карточку в Django Admin — изменение сразу на сайте, в Telegram и VK.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="catalog">
+  <div class="section-inner">
+    <div class="section-head">
+      <div>
+        <p class="eyebrow">Витрина</p>
+        <h2 class="section-title">Каталог морепродуктов</h2>
+      </div>
+      <label class="catalog-search">
+        <span class="visually-hidden">Поиск по каталогу</span>
+        <input type="search" data-catalog-search placeholder="Найти товар из базы">
+      </label>
+    </div>
+
+    <div class="catalog-grid" data-catalog-grid>
+      {% for product in catalog %}
+      <article class="product-card" data-product-id="{{ product.id }}" data-name="{{ product.name }} {{ product.description }}">
+        <div class="product-card__media">
+          {% if product.main_image_url %}
+          <img src="{{ product.main_image_url }}" alt="{{ product.name }}" width="800" height="800" loading="lazy">
+          {% else %}
+          <div class="product-card__placeholder">Нет фото в карточке</div>
+          {% endif %}
+        </div>
+        <div class="product-card__body">
+          <h3>{{ product.name }}</h3>
+          {% if product.description %}<p class="desc">{{ product.description }}</p>{% endif %}
+          <div class="product-card__meta">
+            <div class="price">
+              {{ product.base_price }} ₽
+              <small>за {{ product.unit_label }}, от {{ product.min_quantity }}</small>
+            </div>
+            <div class="qty-row">
+              <div class="qty">
+                <button type="button" data-qty-step="-">−</button>
+                <input
+                  type="text"
+                  inputmode="decimal"
+                  value="{{ product.min_quantity }}"
+                  data-qty
+                  data-min="{{ product.min_quantity }}"
+                  aria-label="Количество {{ product.name }}"
+                >
+                <button type="button" data-qty-step="+">+</button>
+              </div>
+              <button type="button" class="btn btn-primary" data-add-to-cart>В корзину</button>
+            </div>
+          </div>
+        </div>
+      </article>
+      {% empty %}
+      <p class="empty-catalog">В базе пока нет активных товаров. Добавьте карточки в Django Admin — они появятся здесь и в ботах.</p>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<section class="section" id="cart">
+  <div class="section-inner order-layout">
+    <div>
+      <p class="eyebrow">Оформление</p>
+      <h2 class="section-title">Корзина</h2>
+      <p class="lead">Позиции хранятся в backend. Итог, скидка и доставка считаются серверными правилами, а не на сайте.</p>
+    </div>
+    <div class="panel">
+      <div data-cart-items class="cart-items"></div>
+      <p class="empty-catalog" data-cart-empty>Корзина пуста. Добавьте товары из каталога.</p>
+      <dl class="totals">
+        <div><dt>Товары</dt><dd data-cart-items-total>0 ₽</dd></div>
+        <div><dt>Скидка</dt><dd data-cart-discount>0 ₽</dd></div>
+        <div><dt>Доставка</dt><dd data-cart-delivery>0 ₽</dd></div>
+        <div class="totals-sum"><dt>Итого</dt><dd data-cart-total>0 ₽</dd></div>
+      </dl>
+      <form class="checkout-form" data-checkout-form>
+        <div class="field">
+          <label for="checkout-name">Ваше имя</label>
+          <input id="checkout-name" class="field-input" name="name" autocomplete="name" required>
+        </div>
+        <div class="field">
+          <label for="checkout-phone">Телефон</label>
+          <input id="checkout-phone" class="field-input" name="phone" autocomplete="tel" inputmode="tel" placeholder="+7 999 123-45-67">
+        </div>
+        <div class="field">
+          <label for="checkout-email">Email</label>
+          <input id="checkout-email" class="field-input" name="email" type="email" autocomplete="email">
+        </div>
+        <div class="field">
+          <label for="checkout-receiving">Получение</label>
+          <select id="checkout-receiving" class="field-input" name="receiving_type">
+            <option value="delivery">Доставка</option>
+            <option value="pickup">Самовывоз</option>
+          </select>
+        </div>
+        <div class="field" data-address-field>
+          <label for="checkout-address">Адрес доставки</label>
+          <input id="checkout-address" class="field-input" name="delivery_address" autocomplete="street-address">
+        </div>
+        <div class="field">
+          <label for="checkout-payment">Оплата</label>
+          <select id="checkout-payment" class="field-input" name="payment_method">
+            <option value="card_prepayment">Картой онлайн</option>
+            <option value="card_on_delivery">Картой при получении</option>
+            <option value="cash_on_delivery">Наличными при получении</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="checkout-comment">Комментарий</label>
+          <textarea id="checkout-comment" class="field-textarea" name="customer_comment" rows="3"></textarea>
+        </div>
+        <div class="consent">
+          <label>
+            <input type="checkbox" name="personal_data_consent" required>
+            Я согласен на обработку данных для оформления заказа
+          </label>
+        </div>
+        <p class="form-error" data-checkout-error hidden></p>
+        <button class="btn btn-primary form-submit" type="submit">Оформить заказ</button>
+        <p class="helptext" data-order-result hidden></p>
+      </form>
+    </div>
+  </div>
+</section>
+
+<section class="section" id="order">
+  <div class="section-inner order-layout">
+    <div>
+      <p class="eyebrow">Альтернатива</p>
+      <h2 class="section-title">Заказ обычным сообщением</h2>
+      <p class="lead">Можно не собирать корзину вручную: опишите заказ своими словами. AI соберёт черновик через тот же backend.</p>
+    </div>
+    <div class="panel">
+      <form method="post" class="order-form" novalidate data-has-errors="{% if form.errors %}true{% else %}false{% endif %}">
+        {% csrf_token %}
+        {{ form.submission_id }}
+        {{ form.non_field_errors }}
+        <div class="field">
+          <label for="{{ form.name.id_for_label }}">{{ form.name.label }}</label>
+          {{ form.name.errors }}{{ form.name }}
+        </div>
+        <div class="field">
+          <label for="{{ form.phone.id_for_label }}">{{ form.phone.label }}</label>
+          {{ form.phone.errors }}{{ form.phone }}
+          <span class="helptext">{{ form.phone.help_text }}</span>
+        </div>
+        <div class="field">
+          <label for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>
+          {{ form.email.errors }}{{ form.email }}
+          <span class="helptext">{{ form.email.help_text }}</span>
+        </div>
+        <div class="field">
+          <label for="{{ form.message.id_for_label }}">{{ form.message.label }}</label>
+          {{ form.message.errors }}{{ form.message }}
+        </div>
+        <div class="consent">{{ form.personal_data_consent.errors }}<label>{{ form.personal_data_consent }} {{ form.personal_data_consent.label }}</label></div>
+        <button class="btn btn-primary form-submit" type="submit">Отправить заказ</button>
+      </form>
+    </div>
+  </div>
+</section>
+{{ catalog|json_script:"catalog-data" }}
+{% endblock %}
+
+{% block scripts %}
+<script src="{% static 'website/js/storefront.js' %}"></script>
+{% endblock %}
