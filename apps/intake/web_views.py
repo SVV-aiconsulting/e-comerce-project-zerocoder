@@ -34,10 +34,6 @@ class NaturalOrderView(FormView):
         )
         catalog = [dict(item) for item in serializer.data]
         context["catalog"] = catalog
-        context["hero_image"] = next(
-            (item["main_image_url"] for item in catalog if item.get("main_image_url")),
-            "",
-        )
         return context
 
     def get_initial(self):

@@ -3,11 +3,9 @@
 
 {% block content %}
 <section class="hero">
-  {% if hero_image %}
   <div class="hero-media" aria-hidden="true">
-    <img src="{{ hero_image }}" alt="" width="1600" height="1200">
+    <img src="{% static 'website/catalog/hero.jpg' %}" alt="" width="1600" height="1200" fetchpriority="high">
   </div>
-  {% endif %}
   <div class="hero-copy">
     <p class="eyebrow">Охлаждённый улов</p>
     <h1>С глубины моря — к вашему столу</h1>
