@@ -372,6 +372,13 @@ VK-тесты, собрал и опубликовал три образа в GHC
 Наблюдаемость deployment дополнена метками этапов, а перед миграциями есть
 ожидание DNS Docker для имени сервиса PostgreSQL `db`.
 
+Результат оптимизации VPS от 01.09.2026: production Compose получил явный
+профиль для VPS с 4 GB RAM и 2 CPU. Gunicorn запускается с одним worker и двумя
+threads, Celery intake-worker — с `concurrency=1`, а активные контейнеры имеют
+суммарный hard limit 3 GB. Telegram-бот остаётся обязательным сервисом; VK
+сохраняется в profile `vk`. Настройки Django, Celery в Python, локальный Compose,
+workflow CI/CD и конфигурация PostgreSQL не изменялись.
+
 ## 5. Приоритеты
 
 ### Must have

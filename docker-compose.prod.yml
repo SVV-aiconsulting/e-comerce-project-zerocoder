@@ -2,6 +2,9 @@ services:
   db:
     image: postgres:16-alpine
     restart: unless-stopped
+    # Это контейнерный предел, а не настройка PostgreSQL.
+    mem_limit: 512m
+    cpus: 0.50
     env_file:
       - .env
     environment:
@@ -19,6 +22,8 @@ services:
   redis:
     image: redis:8.2-alpine
     restart: unless-stopped
+    mem_limit: 192m
+    cpus: 0.25
     command: redis-server --appendonly yes
     volumes:
       - redis_data:/data
@@ -32,9 +37,16 @@ services:
     image: ghcr.io/svv-aiconsulting/e-comerce-project-zerocoder:${WEBMARKET_IMAGE_TAG:-latest}
     restart: unless-stopped
     # В продакшне используем gunicorn, а не runserver.
-    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000
+    # Один worker экономит RAM; два потока сохраняют обработку параллельных
+    # коротких HTTP-запросов MVP на VPS с 2 CPU.
+    command: >-
+      gunicorn config.wsgi:application --bind 0.0.0.0:8000
+      --workers 1 --threads 2 --worker-tmp-dir /dev/shm
+      --max-requests 500 --max-requests-jitter 50 --timeout 60
     env_file:
       - .env
+    mem_limit: 768m
+    cpus: 1.00
     environment:
       CELERY_BROKER_URL: redis://redis:6379/0
     volumes:
@@ -62,9 +74,16 @@ services:
   celery_worker:
     image: ghcr.io/svv-aiconsulting/e-comerce-project-zerocoder:${WEBMARKET_IMAGE_TAG:-latest}
     restart: unless-stopped
-    command: celery -A config worker --loglevel=INFO --queues=intake
+    # Celery по умолчанию выбирает число CPU для prefork concurrency. Для
+    # небольшой VPS один последовательный consumer предотвращает swap, а
+    # очередь Redis сохраняет и повторяет все поступившие события.
+    command: >-
+      celery -A config worker --loglevel=INFO --queues=intake
+      --concurrency=1 --prefetch-multiplier=1 --max-tasks-per-child=100
     env_file:
       - .env
+    mem_limit: 768m
+    cpus: 1.00
     environment:
       CELERY_BROKER_URL: redis://redis:6379/0
     volumes:
@@ -82,6 +101,8 @@ services:
     command: celery -A config beat --loglevel=INFO --pidfile=/tmp/celerybeat.pid
     env_file:
       - .env
+    mem_limit: 256m
+    cpus: 0.25
     environment:
       CELERY_BROKER_URL: redis://redis:6379/0
     volumes:
@@ -95,6 +116,8 @@ services:
   nginx:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    mem_limit: 128m
+    cpus: 0.25
     depends_on:
       web:
         condition: service_healthy
@@ -116,6 +139,8 @@ services:
   telegram_bot:
     image: ghcr.io/svv-aiconsulting/e-comerce-project-zerocoder-telegram-bot:${WEBMARKET_TELEGRAM_BOT_IMAGE_TAG:-latest}
     restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.50
     env_file:
       - .env
     environment:
@@ -139,6 +164,8 @@ services:
   vk_bot:
     image: ghcr.io/svv-aiconsulting/e-comerce-project-zerocoder-vk-bot:${WEBMARKET_VK_BOT_IMAGE_TAG:-latest}
     restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.50
     env_file:
       - .env
     environment:
