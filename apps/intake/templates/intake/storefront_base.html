@@ -1,0 +1,48 @@
+{% load static %}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}WebMarket — свежие морепродукты{% endblock %}</title>
+  <meta name="description" content="{% block meta_description %}Свежие морепродукты: каталог, доставка и заказ своими словами.{% endblock %}">
+  <link rel="icon" href="{% static 'website/favicon.svg' %}" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Manrope:wght@400;500;650;800&display=swap" rel="stylesheet">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+</head>
+<body>
+  <a class="skip-link" href="#catalog">К каталогу</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="{% url 'natural-order' %}">
+        <span class="brand-mark">WebMarket</span>
+        <span class="brand-tag">море</span>
+      </a>
+      <nav class="nav" aria-label="Разделы сайта">
+        <a class="nav-link" href="{% url 'natural-order' %}#catalog">Каталог</a>
+        <a class="nav-link" href="{% url 'natural-order' %}#cart">Корзина</a>
+        <a class="nav-link" href="{% url 'natural-order' %}#order">AI-заказ</a>
+        <button type="button" class="btn btn-ghost cart-toggle" data-open-cart>
+          Корзина <span class="cart-badge" data-cart-count>0</span>
+        </button>
+      </nav>
+    </div>
+  </header>
+  {% block content %}{% endblock %}
+  <footer class="site-footer" id="contacts">
+    <div class="footer-inner">
+      <div>
+        <strong>WebMarket</strong>
+        <p>Каталог и корзина идут из backend WebMarket — как в Telegram и VK. Изменение карточки в Django Admin сразу видно во всех каналах.</p>
+      </div>
+      <div>
+        <p>Также принимаем заказы в Telegram и VK.</p>
+        <p><a href="{% url 'natural-order' %}#order">webmarket.apernova.ru</a></p>
+      </div>
+    </div>
+  </footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

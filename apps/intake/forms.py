@@ -9,21 +9,23 @@ class NaturalOrderForm(forms.Form):
     name = forms.CharField(
         label="Ваше имя",
         max_length=255,
-        widget=forms.TextInput(attrs={"autocomplete": "name"}),
+        widget=forms.TextInput(attrs={"autocomplete": "name", "class": "field-input"}),
     )
     phone = forms.CharField(
         label="Телефон",
         max_length=32,
         required=False,
         help_text="Телефон или email обязателен. Например, +7 999 123-45-67",
-        widget=forms.TextInput(attrs={"autocomplete": "tel", "inputmode": "tel"}),
+        widget=forms.TextInput(
+            attrs={"autocomplete": "tel", "inputmode": "tel", "class": "field-input"}
+        ),
     )
     email = forms.EmailField(
         label="Email",
         max_length=320,
         required=False,
         help_text="Телефон или email обязателен.",
-        widget=forms.EmailInput(attrs={"autocomplete": "email"}),
+        widget=forms.EmailInput(attrs={"autocomplete": "email", "class": "field-input"}),
     )
     message = forms.CharField(
         label="Что вы хотите заказать?",
@@ -31,6 +33,7 @@ class NaturalOrderForm(forms.Form):
         widget=forms.Textarea(
             attrs={
                 "rows": 6,
+                "class": "field-textarea",
                 "placeholder": (
                     "Например: две упаковки тигровых креветок, самовывоз завтра, "
                     "оплата картой онлайн"

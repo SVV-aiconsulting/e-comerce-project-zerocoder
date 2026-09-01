@@ -2,7 +2,7 @@ from django.core.management import call_command
 
 import pytest
 
-from apps.catalog.models import Product, ProductAlias
+from apps.catalog.models import Product, ProductAlias, ProductImage
 from apps.intake.catalog_matching import CatalogMatcher
 from apps.intake.enums import ItemMatchStatus
 
@@ -35,3 +35,6 @@ def test_load_demo_data_creates_seafood_catalog_and_aliases_idempotently():
     assert Product.objects.get(public_code="DEMO-FLOUNDER").aliases.filter(alias="рыба").exists()
     assert ProductAlias.objects.filter(alias="рыба").count() >= 3
     assert CatalogMatcher.match("рыба").status == ItemMatchStatus.AMBIGUOUS
+    salmon = Product.objects.get(public_code="DEMO-SALMON")
+    assert ProductImage.objects.filter(product=salmon, is_main=True).exists()
+    assert ProductImage.objects.filter(product=salmon).count() == 1

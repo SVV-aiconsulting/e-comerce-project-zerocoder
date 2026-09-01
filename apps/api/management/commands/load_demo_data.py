@@ -1,9 +1,11 @@
 """Загрузка демонстрационных данных для витрины на VPS."""
 from decimal import Decimal
 
+from django.conf import settings
+from django.core.files import File
 from django.core.management.base import BaseCommand
 
-from apps.catalog.models import Product, ProductAlias, normalize_product_text
+from apps.catalog.models import Product, ProductAlias, ProductImage, normalize_product_text
 from apps.common.enums import ProductUnit
 from apps.delivery.models import DeliveryRule
 from apps.discounts.models import DiscountRule
@@ -259,6 +261,7 @@ class Command(BaseCommand):
                     normalized_alias=normalize_product_text(alias),
                     defaults={"alias": alias},
                 )
+            self._attach_catalog_image(product)
             action = "Создан" if created else "Уже есть"
             self.stdout.write(f"{action}: товар «{product.name}» ({product.public_code})")
 
@@ -292,3 +295,28 @@ class Command(BaseCommand):
         )
 
         self.stdout.write(self.style.SUCCESS("Демонстрационные данные готовы."))
+
+    def _attach_catalog_image(self, product: Product) -> None:
+        catalog_dir = (
+            settings.BASE_DIR / "frontends" / "website" / "static" / "website" / "catalog"
+        )
+        filenames = [f"{product.public_code}.jpg"]
+        if product.public_code == "DEMO-URCHIN":
+            filenames.append("DEMO-URCHIN-OPEN.jpg")
+        for index, filename in enumerate(filenames, start=1):
+            source = catalog_dir / filename
+            if not source.is_file():
+                continue
+            is_main = index == 1
+            if is_main and product.images.filter(is_main=True).exists():
+                continue
+            if not is_main and product.images.filter(alt_text=product.name).count() >= 2:
+                continue
+            with source.open("rb") as handle:
+                ProductImage.objects.create(
+                    product=product,
+                    image=File(handle, name=filename),
+                    alt_text=product.name,
+                    is_main=is_main,
+                    sort_order=index,
+                )

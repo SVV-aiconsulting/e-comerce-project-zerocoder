@@ -1,28 +1,20 @@
-<!doctype html>
-<html lang="ru">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Обработка заказа — WebMarket</title>
-  <style>
-    :root { font-family: Inter, system-ui, sans-serif; }
-    body { margin: 0; background: #f3f6f2; color: #183128; }
-    main { width: min(680px, calc(100% - 32px)); margin: 64px auto; }
-    .card { background: white; border-radius: 20px; padding: 32px; box-shadow: 0 18px 50px #173c2a18; }
-    .status { color: #52655d; }
-    .answer { margin: 24px 0; padding: 18px; background: #edf7f1; border-radius: 12px; font-size: 18px; line-height: 1.5; }
-    a { color: #176b45; font-weight: 700; }
-  </style>
-</head>
-<body>
-<main>
-  <section class="card">
-    <h1>Обрабатываем заказ</h1>
-    <p id="status" class="status">Сообщение сохранено. Проверяем данные…</p>
+{% extends "intake/storefront_base.html" %}
+
+{% block title %}Обработка заказа — WebMarket{% endblock %}
+
+{% block content %}
+<main class="status-card">
+  <section class="panel">
+    <p class="eyebrow">Заявка принята</p>
+    <h1 class="section-title">Обрабатываем заказ</h1>
+    <p id="status" class="status-copy">Сообщение сохранено. Проверяем данные…</p>
     <div id="answer" class="answer" hidden></div>
-    <a id="continue" href="{% url 'natural-order' %}" hidden>Ответить или оформить ещё один заказ</a>
+    <a id="continue" class="btn btn-primary" href="{% url 'natural-order' %}#order" hidden>Ответить или оформить ещё один заказ</a>
   </section>
 </main>
+{% endblock %}
+
+{% block scripts %}
 <script>
   const statusUrl = `${window.location.pathname}?format=json`;
   const statusNode = document.getElementById("status");
@@ -48,5 +40,4 @@
   }
   poll();
 </script>
-</body>
-</html>
+{% endblock %}
