@@ -762,6 +762,28 @@ health-check. В workflow для SSH-команды установлен `comman
 `web`. При истечении времени он выводит статус контейнеров и `/etc/resolv.conf`,
 не выполняя миграции с недоступной БД.
 
+### DEV-030 — Ресурсный профиль VPS 4 GB RAM / 2 CPU
+
+- Дата: 01.09.2026
+- Тип: эксплуатационная оптимизация
+- Этап проекта: этап 8
+- Статус: accepted
+- Цель: исключить swap при запуске полного MVP, сохранив обязательный Telegram-канал.
+
+#### Входной запрос
+
+> VPS с 4 GB RAM и 2 CPU уходит в swap из-за процессов Gunicorn/Celery. Оптимизировать
+> production Compose, не меняя локальный Compose, CI/CD, Python-настройки и состав MVP.
+
+#### Решение
+
+Изменён только `docker-compose.prod.yml`. Gunicorn закреплён за одним worker и
+двумя threads; Celery worker — за одним prefork consumer с `prefetch-multiplier=1`
+и периодической заменой дочернего процесса. Для db, Redis, web, Celery, nginx и
+Telegram заданы контейнерные CPU/RAM лимиты, суммарно 3 GB. Это не является tuning
+PostgreSQL и не изменяет семантику очереди: события сохраняются в Redis и ожидают
+единственный worker при кратковременной нагрузке.
+
 ## Runtime-промпты
 
 ### ORDER_EXTRACTION — Извлечение полного состояния заказа
