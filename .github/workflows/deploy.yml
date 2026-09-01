@@ -195,6 +195,25 @@ jobs:
 
             echo "STEP: start application containers"
             docker compose -f docker-compose.prod.yml up -d --no-build
+            # web получает новый IP при immutable-deploy. Nginx резолвит upstream
+            # при старте, поэтому его нужно пересоздать после web, иначе он может
+            # продолжить проксировать на уже удалённый адрес и вернуть 502.
+            echo "STEP: recreate nginx for current web container"
+            docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate nginx
+            echo "STEP: wait for nginx upstream health-check"
+            for attempt in $(seq 1 15); do
+              if docker compose -f docker-compose.prod.yml exec -T nginx \
+                wget -q -O /dev/null http://web:8000/api/health/; then
+                break
+              fi
+              if [ "$attempt" -eq 15 ]; then
+                echo "ERROR: nginx cannot reach the current web container"
+                docker compose -f docker-compose.prod.yml ps || true
+                docker compose -f docker-compose.prod.yml logs --tail=100 nginx web || true
+                exit 1
+              fi
+              sleep 2
+            done
             echo "STEP: wait for Docker DNS inside web container"
             for attempt in $(seq 1 15); do
               if docker compose -f docker-compose.prod.yml exec -T web \
