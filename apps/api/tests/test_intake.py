@@ -139,4 +139,5 @@ def test_intake_detail_returns_unified_clarification(api_client, customer):
         "id": f"clarification:{clarification.pk}",
         "type": "clarification",
         "message": "Доставка или самовывоз?",
+        "action_url": "",
     }
