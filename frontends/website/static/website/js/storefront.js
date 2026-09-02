@@ -109,7 +109,10 @@
       })
       .join("");
     const itemsTotal = document.querySelector("[data-cart-items-total]");
-    if (itemsTotal) itemsTotal.textContent = money(cart.items_total || 0);
+    if (itemsTotal) {
+      itemsTotal.textContent = money(cart.items_total || 0);
+      itemsTotal.dataset.amount = String(cart.items_total || 0);
+    }
   }
 
   async function refreshCart() {
@@ -145,6 +148,10 @@
     const address = String(payload.delivery_address || "").trim();
     if (needsDelivery && address.length < 5) {
       clearDeliveryQuote();
+      const itemsTotal = document.querySelector("[data-cart-items-total]")?.dataset.amount || 0;
+      document.querySelector("[data-cart-discount]").textContent = money(0);
+      document.querySelector("[data-cart-delivery]").textContent = "После ввода адреса";
+      document.querySelector("[data-cart-total]").textContent = `от ${money(itemsTotal)}`;
       if (deliveryQuoteStatus) {
         deliveryQuoteStatus.textContent =
           "Укажите полный адрес — стоимость рассчитает Яндекс Доставка.";
