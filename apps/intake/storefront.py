@@ -23,7 +23,7 @@ from apps.common.exceptions import ShopError
 from apps.customers.models import Customer
 from apps.customers.services import CustomerService
 from apps.customers.validators import normalize_email, normalize_phone, validate_phone
-from apps.orders.pricing import OrderTotals, PricingService
+from apps.delivery.checkout import CheckoutDeliveryService
 from apps.orders.services import OrderService
 from apps.payments.exceptions import PaymentError
 from apps.payments.services import PaymentService
@@ -214,30 +214,17 @@ class WebsiteCheckoutPreviewView(WebsiteApiView):
         if payload.get("phone") or payload.get("email"):
             customer = identify_from_payload(request, payload).customer
         cart = website_cart(request, customer=customer)
-        items = list(CartService.get_contents(cart))
-        if customer is not None:
-            CartService.validate_cart_for_order(cart)
-            totals = PricingService.calculate_order_totals(
-                customer=customer,
-                cart_items=items,
-                receiving_type=receiving_type,
-            )
-        else:
-            items_total = PricingService.calculate_items_total(items)
-            delivery_cost = (
-                Decimal("0")
-                if receiving_type == ReceivingType.PICKUP
-                else PricingService.calculate_delivery(items_total)
-            )
-            totals = OrderTotals(
-                items_total=items_total,
-                discount_amount=Decimal("0.00"),
-                delivery_cost=delivery_cost,
-                total_amount=PricingService.calculate_total(
-                    items_total, Decimal("0"), delivery_cost
-                ),
-                free_delivery=False,
-            )
+        preview = CheckoutDeliveryService.preview(
+            cart=cart,
+            customer=customer,
+            receiving_type=receiving_type,
+            delivery_address=str(payload.get("delivery_address") or ""),
+            payment_method=str(
+                payload.get("payment_method") or PaymentMethod.CARD_PREPAYMENT
+            ),
+        )
+        totals = preview.totals
+        quote = preview.quote
         return JsonResponse(
             {
                 "items_total": str(totals.items_total),
@@ -245,6 +232,10 @@ class WebsiteCheckoutPreviewView(WebsiteApiView):
                 "delivery_cost": str(totals.delivery_cost),
                 "total_amount": str(totals.total_amount),
                 "free_delivery": totals.free_delivery,
+                "delivery_quote_id": quote.pk if quote else None,
+                "delivery_days": quote.delivery_days if quote else None,
+                "delivery_provider": quote.provider if quote else "",
+                "delivery_address": quote.destination_address if quote else "",
             }
         )
 
@@ -267,6 +258,17 @@ class WebsiteCreateOrderView(WebsiteApiView):
         identity = identify_from_payload(request, payload)
         customer = identity.customer
         cart = website_cart(request, customer=customer)
+        quote = CheckoutDeliveryService.selected_quote(
+            cart=cart,
+            receiving_type=receiving_type,
+            delivery_address=str(payload.get("delivery_address") or ""),
+            quote_id=payload.get("delivery_quote_id"),
+        )
+        delivery_cost_override = CheckoutDeliveryService.delivery_cost_for_quote(
+            cart=cart,
+            customer=customer,
+            quote=quote,
+        )
         order = OrderService.create_order_from_cart(
             cart,
             customer=customer,
@@ -275,9 +277,11 @@ class WebsiteCreateOrderView(WebsiteApiView):
             payment_method=payment_method,
             delivery_address=str(payload.get("delivery_address") or "").strip(),
             customer_comment=str(payload.get("customer_comment") or "").strip(),
+            delivery_cost_override=delivery_cost_override,
             is_new_customer=identity.is_new_customer,
             status_source=StatusChangeSource.WEBSITE,
         )
+        CheckoutDeliveryService.attach_quote(quote, order)
         confirmation_url = ""
         if payment_method == PaymentMethod.CARD_PREPAYMENT:
             try:

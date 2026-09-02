@@ -19,6 +19,7 @@ class CreateOrderRequestSerializer(ChannelContextSerializer):
     delivery_address = serializers.CharField(required=False, allow_blank=True)
     customer_comment = serializers.CharField(required=False, allow_blank=True)
     is_new_customer = serializers.BooleanField(required=False, default=False)
+    delivery_quote_id = serializers.IntegerField(required=False, allow_null=True)
 
 
 class OrderItemSerializer(serializers.ModelSerializer):

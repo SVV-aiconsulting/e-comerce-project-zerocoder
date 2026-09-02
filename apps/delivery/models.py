@@ -116,6 +116,15 @@ class DeliveryRule(TimeStampedModel):
 class DeliveryQuote(TimeStampedModel):
     """Снимок расчёта или оффера внешней службы доставки."""
 
+    cart = models.ForeignKey(
+        "carts.Cart",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="delivery_quotes",
+        verbose_name="Корзина",
+    )
+
     order_draft = models.ForeignKey(
         "intake.OrderDraft",
         on_delete=models.SET_NULL,

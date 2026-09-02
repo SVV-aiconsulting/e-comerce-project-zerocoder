@@ -136,12 +136,13 @@
         <div class="field" data-address-field>
           <label for="checkout-address">Адрес доставки</label>
           <input id="checkout-address" class="field-input" name="delivery_address" autocomplete="street-address">
+          <p class="helptext" data-delivery-quote-status>Укажите адрес — стоимость рассчитает Яндекс Доставка.</p>
+          <input type="hidden" name="delivery_quote_id" data-delivery-quote-id>
         </div>
         <div class="field">
           <label for="checkout-payment">Оплата</label>
           <select id="checkout-payment" class="field-input" name="payment_method">
             <option value="card_prepayment">Картой онлайн</option>
-            <option value="card_on_delivery">Картой при получении</option>
             <option value="cash_on_delivery">Наличными при получении</option>
           </select>
         </div>

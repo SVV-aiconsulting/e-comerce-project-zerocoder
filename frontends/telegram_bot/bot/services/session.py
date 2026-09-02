@@ -27,6 +27,8 @@ def _empty_session(external_user_id: str, username: str = "", display_name: str 
         "payment_method": None,
         "customer_comment": "",
         "checkout_preview": None,
+        "delivery_quote_id": None,
+        "delivery_confirmed": False,
         "cart_ui": None,
     }
 

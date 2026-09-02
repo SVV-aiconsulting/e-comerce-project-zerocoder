@@ -235,6 +235,8 @@ class StorefrontApiClient:
         external_user_id: str,
         customer_id: int,
         receiving_type: str,
+        delivery_address: str = "",
+        payment_method: str = "card_prepayment",
     ) -> dict:
         return await self._request(
             "POST",
@@ -244,11 +246,26 @@ class StorefrontApiClient:
                 "external_user_id": external_user_id,
                 "customer_id": customer_id,
                 "receiving_type": receiving_type,
+                "delivery_address": delivery_address,
+                "payment_method": payment_method,
             },
         )
 
     async def create_order(self, payload: dict) -> dict:
         return await self._request("POST", "/api/orders/", json=payload)
+
+    async def create_payment(
+        self,
+        public_number: str,
+        *,
+        channel: str,
+        external_user_id: str,
+    ) -> dict:
+        return await self._request(
+            "POST",
+            f"/api/orders/{public_number}/payments/",
+            json={"channel": channel, "external_user_id": external_user_id},
+        )
 
     async def get_order(
         self,

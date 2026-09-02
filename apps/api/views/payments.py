@@ -39,9 +39,16 @@ class YooKassaWebhookView(APIView):
         return super().dispatch(*args, **kwargs)
 
     def post(self, request):
+        # Gunicorn закрыт Docker-сетью, поэтому nginx является доверенным proxy и
+        # перезаписывает X-Real-IP фактическим адресом отправителя webhook.
+        remote_ip = (
+            request.META.get("HTTP_X_REAL_IP")
+            or (request.META.get("HTTP_X_FORWARDED_FOR", "").split(",", 1)[0].strip())
+            or request.META.get("REMOTE_ADDR")
+        )
         event = YooKassaWebhookService.process(
             request.data,
-            remote_ip=request.META.get("REMOTE_ADDR"),
+            remote_ip=remote_ip,
         )
         # ЮKassa ожидает 200, повторное уведомление погасит уникальный fingerprint.
         return Response({"accepted": True, "event_id": event.pk}, status=status.HTTP_200_OK)

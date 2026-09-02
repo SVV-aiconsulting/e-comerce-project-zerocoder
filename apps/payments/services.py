@@ -196,6 +196,7 @@ class PaymentService:
             payment = Payment.objects.select_for_update().select_related("order").get(
                 pk=payment_id
             )
+            was_paid = payment.order.payment_status == PaymentStatus.PAID
             cls._validate_provider_payment(payment, payload)
             confirmation = payload.get("confirmation")
             confirmation = confirmation if isinstance(confirmation, dict) else {}
@@ -212,6 +213,12 @@ class PaymentService:
             payment.last_error = ""
             payment.save()
             cls._sync_order_payment_status(payment.order, payment.state)
+            if payment.state == PaymentState.SUCCEEDED and not was_paid:
+                from apps.payments.tasks import notify_payment_succeeded
+
+                transaction.on_commit(
+                    lambda current_id=payment.pk: notify_payment_succeeded.delay(current_id)
+                )
             return payment
 
     @staticmethod

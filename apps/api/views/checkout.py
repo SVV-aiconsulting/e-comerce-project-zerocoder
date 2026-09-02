@@ -8,8 +8,7 @@ from apps.api.serializers.checkout import (
     CheckoutPreviewRequestSerializer,
     CheckoutPreviewResponseSerializer,
 )
-from apps.carts.services import CartService
-from apps.orders.pricing import PricingService
+from apps.delivery.checkout import CheckoutDeliveryService
 
 
 class CheckoutPreviewView(APIView):
@@ -33,14 +32,15 @@ class CheckoutPreviewView(APIView):
             external_user_id=data["external_user_id"],
             customer=customer,
         )
-        CartService.validate_cart_for_order(cart)
-        cart_items = list(CartService.get_contents(cart))
-
-        totals = PricingService.calculate_order_totals(
+        preview = CheckoutDeliveryService.preview(
+            cart=cart,
             customer=customer,
-            cart_items=cart_items,
             receiving_type=data["receiving_type"],
+            delivery_address=data.get("delivery_address", ""),
+            payment_method=data.get("payment_method"),
         )
+        totals = preview.totals
+        quote = preview.quote
 
         response_data = {
             "items_total": totals.items_total,
@@ -48,6 +48,10 @@ class CheckoutPreviewView(APIView):
             "delivery_cost": totals.delivery_cost,
             "total_amount": totals.total_amount,
             "free_delivery": totals.free_delivery,
+            "delivery_quote_id": quote.pk if quote else None,
+            "delivery_days": quote.delivery_days if quote else None,
+            "delivery_provider": quote.provider if quote else "",
+            "delivery_address": quote.destination_address if quote else "",
         }
         response_serializer = CheckoutPreviewResponseSerializer(data=response_data)
         response_serializer.is_valid(raise_exception=True)

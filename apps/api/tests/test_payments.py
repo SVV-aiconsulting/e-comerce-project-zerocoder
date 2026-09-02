@@ -1,4 +1,5 @@
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 from rest_framework.test import APIClient
@@ -7,7 +8,7 @@ from apps.carts.services import CartService
 from apps.common.enums import Channel, PaymentMethod, ReceivingType
 from apps.orders.services import OrderService
 from apps.payments.models import Payment, PaymentEnvironment
-from apps.payments.services import PaymentService
+from apps.payments.services import PaymentService, YooKassaWebhookService
 
 
 @pytest.fixture
@@ -80,3 +81,29 @@ def test_yookassa_webhook_rejects_incomplete_payload():
     )
     assert response.status_code == 422
     assert response.data["error"]["code"] == "payment_error"
+
+
+@pytest.mark.django_db
+def test_yookassa_webhook_uses_original_ip_from_nginx(settings, monkeypatch):
+    settings.YOOKASSA_VERIFY_WEBHOOK_IP = True
+    received = {}
+
+    def fake_process(cls, payload, *, remote_ip, client=None):
+        received["remote_ip"] = remote_ip
+        return SimpleNamespace(pk=17)
+
+    monkeypatch.setattr(
+        YooKassaWebhookService,
+        "process",
+        classmethod(fake_process),
+    )
+    response = APIClient().post(
+        "/api/webhooks/payments/yookassa/",
+        {"event": "payment.succeeded", "object": {"id": "pay-1"}},
+        format="json",
+        HTTP_X_REAL_IP="185.71.76.1",
+        REMOTE_ADDR="172.18.0.5",
+    )
+
+    assert response.status_code == 200
+    assert received["remote_ip"] == "185.71.76.1"
