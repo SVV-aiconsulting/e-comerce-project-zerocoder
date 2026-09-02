@@ -152,7 +152,7 @@ async def test_set_cart_item(client, respx_mock):
 
 @pytest.mark.asyncio
 async def test_checkout_preview(client, respx_mock):
-    respx_mock.post(f"{BASE_URL}/api/checkout/preview/").respond(
+    route = respx_mock.post(f"{BASE_URL}/api/checkout/preview/").respond(
         json={
             "items_total": "200.00",
             "discount_amount": "0.00",
@@ -166,8 +166,15 @@ async def test_checkout_preview(client, respx_mock):
         external_user_id="123",
         customer_id=1,
         receiving_type="delivery",
+        delivery_address="Москва, Тверская, 1",
+        payment_method="card_prepayment",
     )
     assert preview["total_amount"] == "500.00"
+    import json
+
+    body = json.loads(route.calls[0].request.content)
+    assert body["delivery_address"] == "Москва, Тверская, 1"
+    assert body["payment_method"] == "card_prepayment"
 
 
 @pytest.mark.asyncio
@@ -186,6 +193,22 @@ async def test_create_order(client, respx_mock):
         }
     )
     assert order["public_number"] == "WM-001"
+
+
+@pytest.mark.asyncio
+async def test_create_payment_link(client, respx_mock):
+    respx_mock.post(f"{BASE_URL}/api/orders/WM-001/payments/").respond(
+        status_code=201,
+        json={"confirmation_url": "https://yookassa.test/pay/1"},
+    )
+
+    payment = await client.create_payment(
+        "WM-001",
+        channel="telegram",
+        external_user_id="123",
+    )
+
+    assert payment["confirmation_url"].endswith("/pay/1")
 
 
 @pytest.mark.asyncio

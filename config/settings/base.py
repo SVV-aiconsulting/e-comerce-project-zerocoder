@@ -182,6 +182,10 @@ YANDEX_DELIVERY_PRODUCTION_STATION_ID = env(
     default="",
 )
 YANDEX_DELIVERY_TIMEOUT_SECONDS = env("YANDEX_DELIVERY_TIMEOUT_SECONDS")
+YANDEX_DELIVERY_QUOTE_TTL_SECONDS = env.int(
+    "YANDEX_DELIVERY_QUOTE_TTL_SECONDS",
+    default=900,
+)
 YANDEX_DELIVERY_MERCHANT_INN = env("YANDEX_DELIVERY_MERCHANT_INN", default="")
 YANDEX_DELIVERY_VAT_CODE = env("YANDEX_DELIVERY_VAT_CODE")
 
@@ -204,6 +208,13 @@ YOOKASSA_RETURN_URL = env(
 YOOKASSA_TIMEOUT_SECONDS = env("YOOKASSA_TIMEOUT_SECONDS")
 YOOKASSA_VERIFY_WEBHOOK_IP = env("YOOKASSA_VERIFY_WEBHOOK_IP")
 YOOKASSA_DEFAULT_VAT_CODE = env("YOOKASSA_DEFAULT_VAT_CODE")
+PAYMENT_SYNC_INTERVAL_SECONDS = env.int("PAYMENT_SYNC_INTERVAL_SECONDS", default=60)
+PAYMENT_SYNC_BATCH_SIZE = env.int("PAYMENT_SYNC_BATCH_SIZE", default=50)
+TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
+TELEGRAM_NOTIFICATION_TIMEOUT_SECONDS = env.float(
+    "TELEGRAM_NOTIFICATION_TIMEOUT_SECONDS",
+    default=10.0,
+)
 
 # Celery/Redis: единая очередь для событий Telegram, VK, email и web.
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://127.0.0.1:6379/0")
@@ -222,6 +233,7 @@ CELERY_TASK_ALWAYS_EAGER = env("CELERY_TASK_ALWAYS_EAGER")
 CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_TASK_ROUTES = {
     "intake.*": {"queue": "intake"},
+    "payments.*": {"queue": "intake"},
 }
 CELERY_BEAT_SCHEDULE = {
     "dispatch-pending-intake-events": {
@@ -235,6 +247,14 @@ CELERY_BEAT_SCHEDULE = {
     "dispatch-email-responses": {
         "task": "intake.dispatch_email_responses",
         "schedule": float(EMAIL_RESPONSE_DISPATCH_INTERVAL_SECONDS),
+    },
+    "sync-pending-yookassa-payments": {
+        "task": "payments.sync_pending",
+        "schedule": float(PAYMENT_SYNC_INTERVAL_SECONDS),
+    },
+    "dispatch-paid-payment-notifications": {
+        "task": "payments.dispatch_paid_notifications",
+        "schedule": 60.0,
     },
 }
 

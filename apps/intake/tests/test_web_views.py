@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 
 from django.core.management import call_command
 
@@ -6,6 +7,8 @@ import pytest
 
 from apps.catalog.models import Product
 from apps.common.enums import Channel
+from apps.delivery.models import DeliveryEnvironment, DeliveryQuote, DeliveryQuoteStatus
+from apps.delivery.quote_service import YandexDeliveryQuoteService
 from apps.customers.services import CustomerService
 from apps.intake.enums import InboundEventStatus, OrderDraftStatus
 from apps.intake.models import Clarification, InboundEvent, OrderDraft
@@ -260,3 +263,65 @@ def test_website_cart_and_checkout_go_through_backend(client):
     order = Order.objects.get(public_number=created.json()["public_number"])
     assert order.channel == Channel.WEBSITE
     assert order.items.get().product == product
+
+
+@pytest.mark.django_db
+def test_website_delivery_preview_is_dynamic_and_quote_is_used_by_order(
+    client,
+    settings,
+    monkeypatch,
+):
+    settings.YANDEX_DELIVERY_ENABLED = True
+    call_command("load_demo_data")
+    product = Product.objects.get(public_code="DEMO-SALMON")
+    client.put(
+        f"/store/cart/items/{product.id}/",
+        data=json.dumps({"quantity": "0.5"}),
+        content_type="application/json",
+    )
+
+    def fake_quote(cart, **kwargs):
+        return DeliveryQuote.objects.create(
+            cart=cart,
+            environment=DeliveryEnvironment.TEST,
+            status=DeliveryQuoteStatus.SUCCEEDED,
+            request_fingerprint="c" * 64,
+            destination_address=kwargs["destination_address"],
+            amount=Decimal("390.00"),
+            delivery_days=1,
+        )
+
+    monkeypatch.setattr(YandexDeliveryQuoteService, "quote_cart", fake_quote)
+    preview = client.post(
+        "/store/checkout/preview/",
+        data=json.dumps(
+            {
+                "receiving_type": "delivery",
+                "delivery_address": "Москва, Арбат, 10",
+                "payment_method": "card_prepayment",
+            }
+        ),
+        content_type="application/json",
+    )
+    quote_id = preview.json()["delivery_quote_id"]
+    created = client.post(
+        "/store/orders/",
+        data=json.dumps(
+            {
+                "name": "Анна Покупатель",
+                "phone": "+7 999 123-45-67",
+                "receiving_type": "delivery",
+                "delivery_address": "Москва, Арбат, 10",
+                "delivery_quote_id": quote_id,
+                "payment_method": "cash_on_delivery",
+                "personal_data_consent": True,
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["delivery_cost"] == "390.00"
+    assert preview.json()["delivery_days"] == 1
+    assert created.status_code == 201
+    assert created.json()["delivery_cost"] == "390.00"

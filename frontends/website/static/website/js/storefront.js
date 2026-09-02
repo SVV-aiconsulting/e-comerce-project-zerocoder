@@ -128,11 +128,35 @@
     return cart;
   }
 
-  async function refreshPreview() {
+  const deliveryQuoteId = document.querySelector("[data-delivery-quote-id]");
+  const deliveryQuoteStatus = document.querySelector("[data-delivery-quote-status]");
+  let deliveryQuoteTimer = null;
+
+  const clearDeliveryQuote = () => {
+    if (deliveryQuoteId) deliveryQuoteId.value = "";
+  };
+
+  async function refreshPreview({ required = false } = {}) {
     const form = document.querySelector("[data-checkout-form]");
     if (!form) return;
     const payload = Object.fromEntries(new FormData(form).entries());
     payload.personal_data_consent = form.personal_data_consent.checked;
+    const needsDelivery = payload.receiving_type === "delivery";
+    const address = String(payload.delivery_address || "").trim();
+    if (needsDelivery && address.length < 5) {
+      clearDeliveryQuote();
+      if (deliveryQuoteStatus) {
+        deliveryQuoteStatus.textContent =
+          "Укажите полный адрес — стоимость рассчитает Яндекс Доставка.";
+      }
+      if (required) throw new Error("Укажите полный адрес доставки.");
+      return null;
+    }
+    if (deliveryQuoteStatus) {
+      deliveryQuoteStatus.textContent = needsDelivery
+        ? "Рассчитываем стоимость в Яндекс Доставке…"
+        : "Самовывоз — бесплатно.";
+    }
     try {
       const preview = await request("/store/checkout/preview/", {
         method: "POST",
@@ -141,8 +165,23 @@
       document.querySelector("[data-cart-discount]").textContent = money(preview.discount_amount);
       document.querySelector("[data-cart-delivery]").textContent = money(preview.delivery_cost);
       document.querySelector("[data-cart-total]").textContent = money(preview.total_amount);
-    } catch (_error) {
-      /* preview optional until cart and contacts are valid */
+      if (deliveryQuoteId) deliveryQuoteId.value = preview.delivery_quote_id || "";
+      if (deliveryQuoteStatus) {
+        const days = preview.delivery_days
+          ? ` Срок: ${preview.delivery_days} дн.`
+          : "";
+        deliveryQuoteStatus.textContent = needsDelivery
+          ? `Адрес: ${preview.delivery_address || address}. Доставка: ${money(preview.delivery_cost)}.${days}`
+          : "Самовывоз — бесплатно.";
+      }
+      return preview;
+    } catch (error) {
+      clearDeliveryQuote();
+      if (deliveryQuoteStatus) {
+        deliveryQuoteStatus.textContent = `Расчёт не выполнен: ${error.message}`;
+      }
+      if (required) throw error;
+      return null;
     }
   }
 
@@ -241,24 +280,36 @@
   const addressField = document.querySelector("[data-address-field]");
   checkoutForm?.receiving_type.addEventListener("change", () => {
     addressField.hidden = checkoutForm.receiving_type.value === "pickup";
+    clearDeliveryQuote();
     refreshPreview();
   });
-  checkoutForm?.addEventListener("change", refreshPreview);
+  checkoutForm?.payment_method.addEventListener("change", () => {
+    clearDeliveryQuote();
+    refreshPreview();
+  });
+  checkoutForm?.delivery_address.addEventListener("input", () => {
+    clearDeliveryQuote();
+    window.clearTimeout(deliveryQuoteTimer);
+    deliveryQuoteTimer = window.setTimeout(() => refreshPreview(), 650);
+  });
   checkoutForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const errorNode = document.querySelector("[data-checkout-error]");
     const resultNode = document.querySelector("[data-order-result]");
     errorNode.hidden = true;
     resultNode.hidden = true;
-    const payload = Object.fromEntries(new FormData(checkoutForm).entries());
-    payload.personal_data_consent = checkoutForm.personal_data_consent.checked;
     try {
+      await refreshPreview({ required: true });
+      const payload = Object.fromEntries(new FormData(checkoutForm).entries());
+      payload.personal_data_consent = checkoutForm.personal_data_consent.checked;
       const order = await request("/store/orders/", {
         method: "POST",
         body: JSON.stringify(payload),
       });
       resultNode.hidden = false;
-      resultNode.textContent = `Заказ ${order.public_number} создан. Сумма ${money(order.total_amount)}.`;
+      resultNode.textContent =
+        `Ваш заказ оформлен. При необходимости наш менеджер свяжется с вами. ` +
+        `Номер ${order.public_number}, сумма ${money(order.total_amount)}.`;
       if (order.confirmation_url) {
         resultNode.textContent += " Переходим к оплате…";
         window.setTimeout(() => {

@@ -8,6 +8,8 @@ from bot.constants import CHANNEL
 from bot.handlers.common import answer_api_error
 from bot.keyboards.inline import (
     confirm_order_keyboard,
+    delivery_quote_keyboard,
+    payment_link_keyboard,
     payment_method_keyboard,
     receiving_type_keyboard,
     skip_comment_keyboard,
@@ -58,6 +60,21 @@ def _format_preview(preview: dict) -> str:
     )
 
 
+def _format_delivery_quote(preview: dict, address: str) -> str:
+    days = (
+        f"\nОриентировочный срок: {preview['delivery_days']} дн."
+        if preview.get("delivery_days")
+        else ""
+    )
+    return (
+        "<b>Параметры доставки</b>\n\n"
+        f"Адрес: {address}\n"
+        f"Стоимость: <b>{format_price(preview['delivery_cost'])}</b>{days}\n"
+        f"Итого с доставкой: <b>{format_price(preview['total_amount'])}</b>\n\n"
+        "Подтвердите адрес и стоимость доставки."
+    )
+
+
 @router.callback_query(F.data == "checkout:start")
 async def callback_checkout_start(callback: CallbackQuery, state: FSMContext, api) -> None:
     session = await require_identified_callback(callback, state, api)
@@ -86,6 +103,17 @@ async def callback_checkout_start(callback: CallbackQuery, state: FSMContext, ap
         await callback.answer()
         return
 
+    await update_session(
+        state,
+        receiving_type=None,
+        delivery_address="",
+        payment_method=None,
+        customer_comment="",
+        checkout_preview=None,
+        delivery_quote_id=None,
+        delivery_confirmed=False,
+    )
+
     await callback.message.answer(
         "Выберите способ получения:",
         reply_markup=receiving_type_keyboard(meta["receiving_types"]),
@@ -99,13 +127,19 @@ async def callback_checkout_receiving(callback: CallbackQuery, state: FSMContext
     if session is None:
         return
     receiving_type = callback.data.split(":")[-1]
-    await update_session(state, receiving_type=receiving_type)
+    await update_session(
+        state,
+        receiving_type=receiving_type,
+        delivery_quote_id=None,
+        delivery_confirmed=False,
+        checkout_preview=None,
+    )
 
     if receiving_type == "delivery":
         await state.set_state(CheckoutStates.entering_address)
         await callback.message.answer("Введите адрес доставки:")
     else:
-        await update_session(state, delivery_address="")
+        await update_session(state, delivery_address="", delivery_confirmed=True)
         await _show_payment_methods(callback.message, api)
 
     await callback.answer()
@@ -133,8 +167,64 @@ async def on_delivery_address(message: Message, state: FSMContext, api) -> None:
         return
 
     await update_session(state, delivery_address=address)
+    try:
+        preview = await api.checkout_preview(
+            channel=CHANNEL,
+            external_user_id=session["external_user_id"],
+            customer_id=session["customer_id"],
+            receiving_type="delivery",
+            delivery_address=address,
+            payment_method="card_prepayment",
+        )
+    except (ApiError, BackendUnavailableError) as exc:
+        await answer_api_error(message, exc)
+        await message.answer("Проверьте адрес и отправьте его ещё раз.")
+        return
+
+    await update_session(
+        state,
+        checkout_preview=preview,
+        delivery_quote_id=preview.get("delivery_quote_id"),
+        delivery_confirmed=False,
+    )
     await state.set_state(None)
-    await _show_payment_methods(message, api)
+    await message.answer(
+        _format_delivery_quote(preview, address),
+        reply_markup=delivery_quote_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "checkout:delivery:confirm")
+async def callback_confirm_delivery(callback: CallbackQuery, state: FSMContext, api) -> None:
+    session = await require_identified_callback(callback, state, api)
+    if session is None:
+        return
+    if not session.get("delivery_quote_id") or not session.get("delivery_address"):
+        await _answer_checkout_stale(callback)
+        return
+    await update_session(state, delivery_confirmed=True)
+    await _show_payment_methods(callback.message, api)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "checkout:delivery:change")
+async def callback_change_delivery_address(
+    callback: CallbackQuery,
+    state: FSMContext,
+    api,
+) -> None:
+    session = await require_identified_callback(callback, state, api)
+    if session is None:
+        return
+    await update_session(
+        state,
+        delivery_quote_id=None,
+        delivery_confirmed=False,
+        checkout_preview=None,
+    )
+    await state.set_state(CheckoutStates.entering_address)
+    await callback.message.answer("Введите новый адрес доставки:")
+    await callback.answer()
 
 
 @router.callback_query(F.data.startswith("checkout:pay:"))
@@ -147,6 +237,14 @@ async def callback_checkout_payment(callback: CallbackQuery, state: FSMContext, 
         return
 
     payment_method = callback.data.split(":")[-1]
+    if payment_method not in {"cash_on_delivery", "card_prepayment"}:
+        await callback.answer("Этот способ оплаты недоступен", show_alert=True)
+        return
+    if session.get("receiving_type") == "delivery" and not session.get(
+        "delivery_confirmed"
+    ):
+        await callback.answer("Сначала подтвердите параметры доставки", show_alert=True)
+        return
     await update_session(state, payment_method=payment_method)
     await state.set_state(CheckoutStates.entering_comment)
     await callback.message.answer(
@@ -197,18 +295,30 @@ async def _show_preview(
         return
 
     try:
-        preview = await api.checkout_preview(
-            channel=CHANNEL,
-            external_user_id=session["external_user_id"],
-            customer_id=session["customer_id"],
-            receiving_type=session["receiving_type"],
-        )
+        preview = session.get("checkout_preview")
+        if session["receiving_type"] == "pickup" or not preview:
+            preview = await api.checkout_preview(
+                channel=CHANNEL,
+                external_user_id=session["external_user_id"],
+                customer_id=session["customer_id"],
+                receiving_type=session["receiving_type"],
+                payment_method=session.get("payment_method") or "card_prepayment",
+            )
     except (ApiError, BackendUnavailableError) as exc:
         await answer_api_error(message, exc)
         return
 
     await update_session(state, checkout_preview=preview)
-    await message.answer(_format_preview(preview), reply_markup=confirm_order_keyboard())
+    payment_label = (
+        "Карта онлайн"
+        if session.get("payment_method") == "card_prepayment"
+        else "Наличными при получении"
+    )
+    details = _format_preview(preview)
+    if session.get("receiving_type") == "delivery":
+        details += f"\nАдрес: {session.get('delivery_address')}"
+    details += f"\nОплата: {payment_label}"
+    await message.answer(details, reply_markup=confirm_order_keyboard())
 
 
 @router.callback_query(F.data == "checkout:confirm")
@@ -228,6 +338,7 @@ async def callback_confirm_order(callback: CallbackQuery, state: FSMContext, api
         "payment_method": session["payment_method"],
         "delivery_address": session.get("delivery_address") or "",
         "customer_comment": session.get("customer_comment") or "",
+        "delivery_quote_id": session.get("delivery_quote_id"),
         "is_new_customer": session.get("is_new_customer", False),
     }
 
@@ -238,12 +349,45 @@ async def callback_confirm_order(callback: CallbackQuery, state: FSMContext, api
         await callback.answer()
         return
 
+    payment = None
+    payment_error = None
+    if session["payment_method"] == "card_prepayment":
+        try:
+            payment = await api.create_payment(
+                order["public_number"],
+                channel=CHANNEL,
+                external_user_id=session["external_user_id"],
+            )
+        except (ApiError, BackendUnavailableError) as exc:
+            payment_error = exc
+
     await state.set_state(None)
     await callback.message.answer(
-        f"<b>Заказ принят!</b>\n\n"
+        "<b>Ваш заказ оформлен.</b> "
+        "При необходимости наш менеджер свяжется с вами.\n\n"
         f"Номер: <b>{order['public_number']}</b>\n"
-        f"Статус: {order['order_status_label']}\n"
         f"Сумма: {format_price(order['total_amount'])}",
         reply_markup=main_menu_keyboard(),
+    )
+    if payment and payment.get("confirmation_url"):
+        await callback.message.answer(
+            "Для оплаты банковской картой перейдите по ссылке:",
+            reply_markup=payment_link_keyboard(payment["confirmation_url"]),
+        )
+    elif payment_error is not None:
+        await callback.message.answer(
+            "Заказ сохранён, но ссылку на оплату сейчас создать не удалось. "
+            "Менеджер проверит оплату и при необходимости свяжется с вами."
+        )
+
+    await update_session(
+        state,
+        receiving_type=None,
+        delivery_address="",
+        payment_method=None,
+        customer_comment="",
+        checkout_preview=None,
+        delivery_quote_id=None,
+        delivery_confirmed=False,
     )
     await callback.answer()

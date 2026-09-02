@@ -91,7 +91,7 @@ async def callback_order_detail(callback: CallbackQuery, state: FSMContext, api)
     text = (
         f"<b>Заказ {order['public_number']}</b>\n\n"
         f"Статус: {order['order_status_label']}\n"
-        f"Оплата: {order['payment_method_label']}\n"
+        f"Оплата: {order['payment_method_label']} — {order['payment_status_label']}\n"
         f"Получение: {order['receiving_type_label']}\n"
         f"Дата: {format_datetime(order['created_at'])}\n"
         f"Сумма: {format_price(order['total_amount'])}\n"

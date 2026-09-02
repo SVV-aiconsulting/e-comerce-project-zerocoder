@@ -93,6 +93,13 @@ class Payment(TimeStampedModel):
     receipt_data = models.JSONField(default=dict, blank=True, verbose_name="Данные чека")
     provider_payload = models.JSONField(default=dict, blank=True, verbose_name="Ответ ЮKassa")
     last_error = models.TextField(blank=True, verbose_name="Последняя ошибка")
+    paid_notification_sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Уведомление об оплате отправлено",
+    )
+    paid_notification_attempts = models.PositiveSmallIntegerField(default=0)
+    paid_notification_error = models.TextField(blank=True)
 
     class Meta:
         verbose_name = "Платёж"

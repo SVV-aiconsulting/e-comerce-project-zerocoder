@@ -45,13 +45,50 @@ def receiving_type_keyboard(options: list) -> InlineKeyboardMarkup:
 
 
 def payment_method_keyboard(options: list) -> InlineKeyboardMarkup:
-    allowed = {"cash_on_delivery", "card_on_delivery"}
+    allowed = {"cash_on_delivery", "card_prepayment"}
+    labels = {
+        "cash_on_delivery": "Наличными при получении",
+        "card_prepayment": "Карта онлайн",
+    }
     rows = [
-        [InlineKeyboardButton(text=item["label"], callback_data=f"checkout:pay:{item['value']}")]
+        [
+            InlineKeyboardButton(
+                text=labels[item["value"]],
+                callback_data=f"checkout:pay:{item['value']}",
+            )
+        ]
         for item in options
         if item["value"] in allowed
     ]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def delivery_quote_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Подтвердить доставку",
+                    callback_data="checkout:delivery:confirm",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Изменить адрес",
+                    callback_data="checkout:delivery:change",
+                )
+            ],
+            [InlineKeyboardButton(text="Отмена", callback_data="nav:menu")],
+        ]
+    )
+
+
+def payment_link_keyboard(url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Оплатить заказ", url=url)],
+        ]
+    )
 
 
 def confirm_order_keyboard() -> InlineKeyboardMarkup:

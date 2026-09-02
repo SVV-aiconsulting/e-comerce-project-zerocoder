@@ -9,6 +9,7 @@ from typing import Iterable
 from django.db import transaction
 
 from apps.common.enums import PaymentMethod
+from apps.carts.services import CartService
 from apps.delivery.exceptions import (
     DeliveryDataIncompleteError,
     YandexDeliveryAPIError,
@@ -190,6 +191,7 @@ class YandexDeliveryQuoteService:
     ) -> DeliveryQuote:
         package = DeliveryPackageService.from_order(order)
         return cls._quote(
+            cart=None,
             order=order,
             order_draft=None,
             destination_address=order.delivery_address,
@@ -215,6 +217,7 @@ class YandexDeliveryQuoteService:
             Decimal("0"),
         ).quantize(Decimal("0.01"))
         return cls._quote(
+            cart=None,
             order=None,
             order_draft=draft,
             destination_address=draft.delivery_address,
@@ -225,10 +228,49 @@ class YandexDeliveryQuoteService:
         )
 
     @classmethod
+    def quote_cart(
+        cls,
+        cart,
+        *,
+        destination_address: str,
+        items_total: Decimal,
+        payment_method: str = PaymentMethod.CARD_PREPAYMENT,
+        client: YandexDeliveryClient | None = None,
+    ) -> DeliveryQuote:
+        """Рассчитать доставку активной ручной корзины до создания CRM-заказа."""
+        CartService.validate_cart_for_order(cart)
+        package = DeliveryPackageService.build(
+            DeliveryLine(product=item.product, quantity=item.quantity)
+            for item in CartService.get_contents(cart)
+        )
+        # Предварительная цена нужна до выбора оплаты. Для cash-on-delivery
+        # используем тариф уже оплаченного заказа: наличные не передаются в API
+        # Яндекса и остаются бизнес-условием WebMarket.
+        quote_payment_method = (
+            payment_method
+            if payment_method in {
+                PaymentMethod.CARD_PREPAYMENT,
+                PaymentMethod.CARD_ON_DELIVERY,
+            }
+            else PaymentMethod.CARD_PREPAYMENT
+        )
+        return cls._quote(
+            cart=cart,
+            order=None,
+            order_draft=None,
+            destination_address=destination_address,
+            package=package,
+            items_total=items_total,
+            payment_method=quote_payment_method,
+            client=client,
+        )
+
+    @classmethod
     @transaction.atomic
     def _quote(
         cls,
         *,
+        cart,
         order,
         order_draft,
         destination_address: str,
@@ -253,6 +295,7 @@ class YandexDeliveryQuoteService:
             result = api_client.calculate_price(payload)
         except YandexDeliveryAPIError as exc:
             quote = DeliveryQuote.objects.create(
+                cart=cart,
                 order=order,
                 order_draft=order_draft,
                 environment=config.environment,
@@ -279,6 +322,7 @@ class YandexDeliveryQuoteService:
             return quote
 
         quote = DeliveryQuote.objects.create(
+            cart=cart,
             order=order,
             order_draft=order_draft,
             environment=config.environment,

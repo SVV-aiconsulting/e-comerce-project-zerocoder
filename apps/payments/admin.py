@@ -35,6 +35,9 @@ class PaymentAdmin(admin.ModelAdmin):
         "receipt_data",
         "provider_payload",
         "last_error",
+        "paid_notification_sent_at",
+        "paid_notification_attempts",
+        "paid_notification_error",
         "created_at",
         "updated_at",
     )

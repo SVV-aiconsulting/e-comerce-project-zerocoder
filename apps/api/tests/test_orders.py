@@ -6,6 +6,11 @@ from rest_framework.test import APIClient
 
 from apps.carts.services import CartService
 from apps.common.enums import Channel, PaymentMethod, ReceivingType
+from apps.delivery.models import (
+    DeliveryEnvironment,
+    DeliveryQuote,
+    DeliveryQuoteStatus,
+)
 from apps.orders.models import Order
 
 
@@ -105,3 +110,45 @@ def test_create_order_twice_returns_empty_cart(api_client, customer, product, ac
 
     assert response.status_code == 422
     assert response.data["error"]["code"] == "empty_cart"
+
+
+@pytest.mark.django_db
+def test_create_order_keeps_confirmed_yandex_quote(
+    api_client,
+    customer,
+    product,
+    active_cart,
+    delivery_rule,
+    settings,
+):
+    settings.YANDEX_DELIVERY_ENABLED = True
+    CartService.set_item_quantity(active_cart, product, Decimal("1"))
+    quote = DeliveryQuote.objects.create(
+        cart=active_cart,
+        environment=DeliveryEnvironment.TEST,
+        status=DeliveryQuoteStatus.SUCCEEDED,
+        request_fingerprint="b" * 64,
+        destination_address="Москва, Тверская, 1",
+        amount=Decimal("444.00"),
+    )
+
+    response = api_client.post(
+        "/api/orders/",
+        {
+            "channel": Channel.TELEGRAM,
+            "external_user_id": "12345",
+            "customer_id": customer.pk,
+            "receiving_type": ReceivingType.DELIVERY,
+            "payment_method": PaymentMethod.CASH_ON_DELIVERY,
+            "delivery_address": "Москва, Тверская, 1",
+            "delivery_quote_id": quote.pk,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    assert str(response.data["delivery_cost"]) == "444.00"
+    assert str(response.data["total_amount"]) == "544.00"
+    quote.refresh_from_db()
+    assert quote.status == DeliveryQuoteStatus.SELECTED
+    assert quote.order.public_number == response.data["public_number"]
