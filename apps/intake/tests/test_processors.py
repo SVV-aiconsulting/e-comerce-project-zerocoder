@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 
 import pytest
 
@@ -177,7 +178,7 @@ def test_assistant_full_dialog_delivery_confirmation_and_yookassa_link(
             status=DeliveryQuoteStatus.SUCCEEDED,
             request_fingerprint="f" * 64,
             destination_address=draft.delivery_address,
-            amount="321.50",
+            amount=Decimal("321.50"),
             currency="RUB",
             delivery_days=2,
         )
