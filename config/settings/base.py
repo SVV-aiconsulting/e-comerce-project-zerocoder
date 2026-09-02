@@ -15,6 +15,7 @@ env = environ.Env(
     INTAKE_RETRY_BASE_SECONDS=(int, 10),
     INTAKE_RETRY_MAX_SECONDS=(int, 300),
     AI_ORDER_PROCESSING_ENABLED=(bool, False),
+    AI_ASSISTANT_ENABLED=(bool, False),
     GIGACHAT_VERIFY_SSL=(bool, True),
     GIGACHAT_TIMEOUT_SECONDS=(float, 30.0),
     GIGACHAT_MAX_TOKENS=(int, 1600),
@@ -243,13 +244,22 @@ INTAKE_MAX_PROCESSING_ATTEMPTS = env("INTAKE_MAX_PROCESSING_ATTEMPTS")
 INTAKE_RETRY_BASE_SECONDS = env("INTAKE_RETRY_BASE_SECONDS")
 INTAKE_RETRY_MAX_SECONDS = env("INTAKE_RETRY_MAX_SECONDS")
 
-# GigaChat используется только для NLU. Он не получает доступ к ORM/SQL и не
+# LLM используется только для NLU. Он не получает доступ к ORM/SQL и не
 # выполняет цены, оплату, доставку или создание финального заказа.
-AI_ORDER_PROCESSING_ENABLED = env("AI_ORDER_PROCESSING_ENABLED")
-GIGACHAT_CREDENTIALS = env(
-    "GIGACHAT_CREDENTIALS",
-    default=env("GIGACHAT_TOKEN", default=""),
-)
+# AI_ORDER_PROCESSING_ENABLED сохранён как совместимое имя старой конфигурации.
+_LEGACY_AI_ENABLED = env("AI_ORDER_PROCESSING_ENABLED")
+AI_ASSISTANT_ENABLED = env("AI_ASSISTANT_ENABLED", default=_LEGACY_AI_ENABLED)
+AI_ORDER_PROCESSING_ENABLED = AI_ASSISTANT_ENABLED
+AI_ASSISTANT_PROVIDER = env("AI_ASSISTANT_PROVIDER", default="gigachat").strip().lower()
+AI_ASSISTANT_PROMPT_PROFILE = env(
+    "AI_ASSISTANT_PROMPT_PROFILE",
+    default="ecommerce_sales_v1",
+).strip()
+_GIGACHAT_CREDENTIALS = env("GIGACHAT_CREDENTIALS", default="").strip()
+GIGACHAT_CREDENTIALS = _GIGACHAT_CREDENTIALS or env(
+    "GIGACHAT_TOKEN",
+    default="",
+).strip()
 GIGACHAT_SCOPE = env("GIGACHAT_SCOPE", default="GIGACHAT_API_PERS")
 GIGACHAT_MODEL = env("GIGACHAT_MODEL", default="GigaChat-2")
 GIGACHAT_BASE_URL = env("GIGACHAT_BASE_URL", default="https://api.giga.chat/v1")

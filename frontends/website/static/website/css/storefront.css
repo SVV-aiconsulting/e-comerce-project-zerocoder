@@ -558,18 +558,41 @@ textarea {
   box-shadow: var(--shadow);
 }
 
+.assistant-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
 .assistant-dialog::backdrop {
   background: rgba(2, 5, 9, 0.72);
   backdrop-filter: blur(4px);
 }
 
 .assistant-dialog__header {
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
   padding: 22px 24px 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.assistant-dialog__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.assistant-new {
+  border: 0;
+  padding: 7px 2px;
+  color: var(--ice);
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .assistant-dialog__header h2 {
@@ -591,6 +614,7 @@ textarea {
 }
 
 .assistant-note {
+  flex: 0 0 auto;
   margin: 0;
   padding: 13px 24px;
   color: var(--mist);
@@ -600,8 +624,8 @@ textarea {
 
 .assistant-messages {
   display: flex;
-  min-height: 240px;
-  max-height: min(390px, 44dvh);
+  min-height: 120px;
+  flex: 1 1 260px;
   flex-direction: column;
   gap: 12px;
   overflow-y: auto;
@@ -638,6 +662,7 @@ textarea {
 }
 
 .assistant-form {
+  flex: 0 0 auto;
   padding: 14px 24px 24px;
   border-top: 1px solid var(--line);
 }

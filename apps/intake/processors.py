@@ -68,32 +68,10 @@ class InboundEventProcessor:
             draft_id=draft.pk,
             customer_id=event.customer_id or draft.customer_id,
         )
-        if settings.AI_ORDER_PROCESSING_ENABLED:
-            from apps.intake.ai.services import AIExtractionService
-            from apps.intake.clarifications import ClarificationService
-            from apps.intake.draft_application import DraftExtractionApplier
-            from apps.intake.enums import OrderDraftStatus
-            from apps.intake.fulfillment import (
-                DraftOrderConversionService,
-                DraftPricingService,
-            )
+        if settings.AI_ASSISTANT_ENABLED or settings.AI_ORDER_PROCESSING_ENABLED:
+            from apps.assistant.services import OrderAssistantService
 
-            extraction, _run = AIExtractionService.extract_with_repair(event, draft)
-            ClarificationService.record_pending_answer(draft, event)
-            draft = DraftExtractionApplier.apply(draft, extraction)
-            if draft.status == OrderDraftStatus.READY_FOR_PREVIEW:
-                draft = DraftPricingService.preview(draft)
-            if draft.status == OrderDraftStatus.CONFIRMED:
-                order = DraftOrderConversionService.convert(draft)
-                if (
-                    settings.YOOKASSA_ENABLED
-                    and order.payment_method == "card_prepayment"
-                ):
-                    from apps.payments.services import PaymentService
-
-                    PaymentService.ensure_payment_link(order)
-            else:
-                ClarificationService.sync_next_question(draft, event)
+            draft = OrderAssistantService.process(event, draft)
         return ProcessingOutcome(
             status=InboundEventStatus.PROCESSED,
             draft_id=draft.pk,

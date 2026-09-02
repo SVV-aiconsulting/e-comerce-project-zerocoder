@@ -18,8 +18,16 @@ def publish_stub(monkeypatch):
     monkeypatch.setattr(InboundEventService, "publish", lambda _event_id: True)
 
 
+@pytest.fixture
+def assistant_enabled(settings):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ORDER_PROCESSING_ENABLED = True
+
+
 @pytest.mark.django_db
-def test_website_assistant_registers_customer_and_enqueues_event(client, publish_stub):
+def test_website_assistant_registers_customer_and_enqueues_event(
+    client, publish_stub, assistant_enabled
+):
     response = client.post(
         "/store/assistant/messages/",
         data=json.dumps(
@@ -47,7 +55,7 @@ def test_website_assistant_registers_customer_and_enqueues_event(client, publish
 
 @pytest.mark.django_db
 def test_website_assistant_event_is_session_bound_and_returns_clarification(
-    client, publish_stub
+    client, publish_stub, assistant_enabled
 ):
     response = client.post(
         "/store/assistant/messages/",
@@ -83,7 +91,9 @@ def test_website_assistant_event_is_session_bound_and_returns_clarification(
 
 
 @pytest.mark.django_db
-def test_website_assistant_links_order_to_existing_customer_by_email(client, publish_stub):
+def test_website_assistant_links_order_to_existing_customer_by_email(
+    client, publish_stub, assistant_enabled
+):
     customer = CustomerService.create_customer(
         name="Анна из CRM",
         email="anna@example.com",
@@ -109,7 +119,9 @@ def test_website_assistant_links_order_to_existing_customer_by_email(client, pub
 
 
 @pytest.mark.django_db
-def test_website_assistant_requires_consent_before_storing_contact(client, publish_stub):
+def test_website_assistant_requires_consent_before_storing_contact(
+    client, publish_stub, assistant_enabled
+):
     response = client.post(
         "/store/assistant/messages/",
         data=json.dumps({"message": "Мой телефон +7 999 123-45-67"}),
@@ -117,6 +129,52 @@ def test_website_assistant_requires_consent_before_storing_contact(client, publi
     )
 
     assert response.status_code == 400
+    assert InboundEvent.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_new_website_assistant_conversation_hides_previous_history(
+    client, publish_stub, assistant_enabled
+):
+    first = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Хочу лосось"}),
+        content_type="application/json",
+    )
+    assert first.status_code == 202
+    old_key = InboundEvent.objects.get().conversation_key
+    assert client.get("/store/assistant/history/").json()["messages"][0]["message"] == "Хочу лосось"
+
+    reset = client.post(
+        "/store/assistant/conversations/",
+        data="{}",
+        content_type="application/json",
+    )
+
+    assert reset.status_code == 201
+    assert client.get("/store/assistant/history/").json()["messages"] == []
+    second = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Хочу креветки"}),
+        content_type="application/json",
+    )
+    assert second.status_code == 202
+    assert InboundEvent.objects.order_by("-created_at").first().conversation_key != old_key
+
+
+@pytest.mark.django_db
+def test_website_assistant_can_be_disabled(client, settings):
+    settings.AI_ASSISTANT_ENABLED = False
+    settings.AI_ORDER_PROCESSING_ENABLED = False
+
+    response = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Хочу лосось"}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "assistant_disabled"
     assert InboundEvent.objects.count() == 0
 
 

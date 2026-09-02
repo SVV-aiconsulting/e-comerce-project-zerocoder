@@ -4,6 +4,7 @@ import re
 import uuid
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
@@ -33,6 +34,7 @@ from apps.intake.services import InboundEventService
 
 SESSION_USER_KEY = "website_external_user_id"
 SESSION_CUSTOMER_KEY = "website_customer_id"
+SESSION_ASSISTANT_CONVERSATION_KEY = "website_assistant_conversation_id"
 ASSISTANT_MESSAGE_MAX_LENGTH = 20_000
 PHONE_IN_TEXT_RE = re.compile(r"(?<!\d)(?:\+7|7|8)[\s().-]*\d(?:[\s().-]*\d){9}(?!\d)")
 EMAIL_IN_TEXT_RE = re.compile(
@@ -48,6 +50,16 @@ def get_or_create_website_user_id(request) -> str:
         request.session[SESSION_USER_KEY] = user_id
         request.session.modified = True
     return user_id
+
+
+def get_or_create_assistant_conversation_key(request) -> str:
+    """Отдельный ключ текущего AI-диалога внутри стабильной website-сессии."""
+    conversation_id = request.session.get(SESSION_ASSISTANT_CONVERSATION_KEY)
+    if not conversation_id:
+        conversation_id = str(uuid.uuid4())
+        request.session[SESSION_ASSISTANT_CONVERSATION_KEY] = conversation_id
+        request.session.modified = True
+    return f"{get_or_create_website_user_id(request)}:assistant:{conversation_id}"
 
 
 def website_cart(request, customer=None):
@@ -282,6 +294,12 @@ class WebsiteAssistantMessageView(WebsiteApiView):
     """Публичный browser-safe вход в существующий AI order pipeline."""
 
     def post(self, request):
+        if not settings.AI_ASSISTANT_ENABLED:
+            return json_error(
+                "AI-консультант временно отключён. Оформите заказ через каталог.",
+                code="assistant_disabled",
+                status=503,
+            )
         payload = parse_json(request)
         message = str(payload.get("message") or "").strip()
         if not message:
@@ -315,7 +333,7 @@ class WebsiteAssistantMessageView(WebsiteApiView):
             channel=Channel.WEBSITE,
             external_event_id=str(uuid.uuid4()),
             external_user_id=external_user_id,
-            conversation_key=external_user_id,
+            conversation_key=get_or_create_assistant_conversation_key(request),
             customer=customer,
             kind=InboundEventKind.MESSAGE,
             raw_text=message,
@@ -345,16 +363,17 @@ class WebsiteAssistantEventView(WebsiteApiView):
 
 class WebsiteAssistantHistoryView(WebsiteApiView):
     def get(self, request):
-        events = (
+        events = list(
             InboundEvent.objects.select_related("draft__converted_order")
             .filter(
                 channel=Channel.WEBSITE,
                 external_user_id=get_or_create_website_user_id(request),
+                conversation_key=get_or_create_assistant_conversation_key(request),
             )
-            .order_by("created_at")[:30]
+            .order_by("-created_at")[:30]
         )
         messages = []
-        for event in events:
+        for event in reversed(events):
             messages.append({"role": "user", "message": event.raw_text})
             payload = InboundEventResponseService.present(event)
             response = payload.get("response")
@@ -367,3 +386,12 @@ class WebsiteAssistantHistoryView(WebsiteApiView):
                     }
                 )
         return JsonResponse({"messages": messages})
+
+
+class WebsiteAssistantConversationView(WebsiteApiView):
+    """Начать новый черновик, не меняя website-идентичность и корзину."""
+
+    def post(self, request):
+        request.session[SESSION_ASSISTANT_CONVERSATION_KEY] = str(uuid.uuid4())
+        request.session.modified = True
+        return JsonResponse({"messages": [], "status": "new"}, status=201)

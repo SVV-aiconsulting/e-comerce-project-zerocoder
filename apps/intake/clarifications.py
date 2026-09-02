@@ -97,7 +97,10 @@ class ClarificationService:
     @classmethod
     def _build_question(cls, draft: OrderDraft, field_path: str) -> str:
         questions = {
-            "customer": "Чтобы оформить заказ, укажите номер телефона для связи.",
+            "customer": (
+                "Чтобы оформить заказ, укажите телефон или email для связи. "
+                "На сайте также отметьте согласие на обработку этих данных."
+            ),
             "receiving_type": "Как вы хотите получить заказ: доставка или самовывоз?",
             "delivery_address": "Укажите полный адрес доставки.",
             "contact_phone": (
@@ -105,15 +108,30 @@ class ClarificationService:
                 "Укажите номер в формате +7XXXXXXXXXX."
             ),
             "payment_method": (
-                "Как удобнее оплатить: онлайн картой, картой при получении "
-                "или наличными при получении?"
+                "Как удобнее оплатить: наличными при получении или банковской "
+                "картой онлайн? При оплате картой я пришлю безопасную ссылку ЮKassa."
             ),
             "delivery_payment_method": (
                 "Яндекс Доставка не принимает наличные. Выберите онлайн-оплату "
                 "или оплату картой при получении."
             ),
             "desired_date": "Уточните желаемую дату получения заказа.",
+            "delivery_quote": (
+                "Не удалось получить расчёт Яндекс Доставки. Проверьте адрес и "
+                "напишите «повторить расчёт» или выберите самовывоз."
+            ),
             "items": "Какие товары и в каком количестве вы хотите заказать?",
+            "sales_intent": (
+                "Этот товар есть в каталоге. Хотите добавить его в заказ? "
+                "Напишите нужное количество."
+            ),
+            "order_status": (
+                "Для проверки статуса откройте «Мои заказы» или напишите номер заказа."
+            ),
+            "assistant_intent": (
+                "Здравствуйте! Расскажите, что хотите купить, например: "
+                "«хочу рыбу на ужин» или «добавь килограмм креветок»."
+            ),
             "confirmation": cls._confirmation_question(draft),
         }
         if field_path in questions:
@@ -147,8 +165,27 @@ class ClarificationService:
 
     @staticmethod
     def _confirmation_question(draft: OrderDraft) -> str:
-        total = draft.total_amount if draft.total_amount is not None else "—"
-        return (
-            f"Итого к оплате {total} ₽. Подтверждаете оформление заказа? "
-            "Ответьте «да» или сообщите изменения."
+        lines = []
+        for item in draft.items.select_related("product").order_by("line_number"):
+            name = item.product.name if item.product_id else item.raw_product_name
+            lines.append(f"• {name} — {item.requested_quantity} {item.requested_unit}")
+        payment = {
+            "cash_on_delivery": "наличными при получении",
+            "card_on_delivery": "картой при получении",
+            "card_prepayment": "картой онлайн",
+        }.get(draft.payment_method, draft.payment_method or "—")
+        parts = ["Проверьте заказ:", *lines]
+        if draft.items_total is not None:
+            parts.append(f"Товары: {draft.items_total} ₽")
+        if draft.receiving_type == "delivery":
+            parts.append(f"Доставка: {draft.delivery_cost or 0} ₽, {draft.delivery_address}")
+        else:
+            parts.append("Получение: самовывоз")
+        parts.extend(
+            [
+                f"Оплата: {payment}",
+                f"Итого: {draft.total_amount if draft.total_amount is not None else '—'} ₽",
+                "Подтверждаете оформление? Ответьте «да» или сообщите изменения.",
+            ]
         )
+        return "\n".join(parts)
