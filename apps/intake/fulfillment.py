@@ -50,14 +50,18 @@ class DraftPricingService:
                 quote = YandexDeliveryQuoteService.quote_draft(draft)
             except DeliveryError:
                 quote = None
-            if quote and quote.status == DeliveryQuoteStatus.SUCCEEDED:
-                delivery_cost = Decimal("0") if totals.free_delivery else quote.amount
-                totals.delivery_cost = delivery_cost
-                totals.total_amount = PricingService.calculate_total(
-                    totals.items_total,
-                    totals.discount_amount,
-                    delivery_cost,
-                )
+            if not quote or quote.status != DeliveryQuoteStatus.SUCCEEDED:
+                draft.status = OrderDraftStatus.NEEDS_CLARIFICATION
+                draft.missing_fields = ["delivery_quote"]
+                draft.save(update_fields=["status", "missing_fields", "updated_at"])
+                return draft
+            delivery_cost = Decimal("0") if totals.free_delivery else quote.amount
+            totals.delivery_cost = delivery_cost
+            totals.total_amount = PricingService.calculate_total(
+                totals.items_total,
+                totals.discount_amount,
+                delivery_cost,
+            )
         return OrderDraftService.record_preview(
             draft,
             items_total=totals.items_total,

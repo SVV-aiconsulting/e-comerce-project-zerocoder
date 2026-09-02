@@ -26,11 +26,23 @@ class AIExtractionService:
     provider_name = "gigachat"
 
     @classmethod
-    def extract(cls, event, draft, *, provider=None, current_datetime=None):
+    def extract(
+        cls,
+        event,
+        draft,
+        *,
+        provider=None,
+        provider_name="gigachat",
+        prompt_profile=None,
+        current_datetime=None,
+    ):
+        if provider_name != "gigachat":
+            raise LLMConfigurationError(f"Провайдер {provider_name} пока не подключён")
         provider = provider or get_gigachat_provider()
         prompt = build_order_extraction_prompt(
             event,
             draft,
+            profile=prompt_profile,
             current_datetime=current_datetime,
         )
         return cls._execute(
@@ -48,15 +60,21 @@ class AIExtractionService:
         draft,
         *,
         provider=None,
+        provider_name="gigachat",
+        prompt_profile=None,
         current_datetime=None,
     ):
         """Извлечь заказ и один раз исправить только структуру ответа."""
+        if provider_name != "gigachat":
+            raise LLMConfigurationError(f"Провайдер {provider_name} пока не подключён")
         provider = provider or get_gigachat_provider()
         try:
             return cls.extract(
                 event,
                 draft,
                 provider=provider,
+                provider_name=provider_name,
+                prompt_profile=prompt_profile,
                 current_datetime=current_datetime,
             )
         except LLMResponseValidationError as exc:
@@ -66,6 +84,7 @@ class AIExtractionService:
                 event,
                 draft,
                 exc.run.raw_response,
+                profile=prompt_profile,
                 current_datetime=current_datetime,
             )
             return cls._execute(

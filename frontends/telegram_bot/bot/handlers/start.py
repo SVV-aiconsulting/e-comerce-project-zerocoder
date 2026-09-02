@@ -8,12 +8,12 @@ from aiogram.types import Message
 
 from bot.api.client import StorefrontApiClient
 from bot.api.errors import ApiError, BackendUnavailableError
-from bot.handlers.catalog import show_catalog
 from bot.handlers.common import answer_api_error
 from bot.handlers.registration import prompt_registration
 from bot.keyboards.reply import main_menu_keyboard
 from bot.services.identify import identify_without_phone
 from bot.services.session import SESSION_KEY, apply_identify_response, get_session, is_identified, save_session
+from bot.constants import AI_ASSISTANT_WELCOME
 
 logger = logging.getLogger(__name__)
 router = Router(name="start")
@@ -46,16 +46,14 @@ async def cmd_start(message: Message, state: FSMContext, api: StorefrontApiClien
         await save_session(state, session)
 
         if was_identified:
-            await show_catalog(message, state, api, user_id=user_ctx.id)
-            await message.answer("Меню:", reply_markup=main_menu_keyboard())
+            await message.answer(AI_ASSISTANT_WELCOME, reply_markup=main_menu_keyboard())
             return
 
         name = session.get("display_name") or "друг"
         await message.answer(
-            f"Здравствуйте, {name}! Добро пожаловать в магазин.",
+            f"Здравствуйте, {name}! Добро пожаловать в магазин.\n\n{AI_ASSISTANT_WELCOME}",
             reply_markup=main_menu_keyboard(),
         )
-        await show_catalog(message, state, api, user_id=user_ctx.id)
         return
 
     if response.get("status") == "registration_required":

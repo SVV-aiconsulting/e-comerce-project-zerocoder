@@ -8,6 +8,7 @@ from apps.intake.storefront import (
     WebsiteAssistantEventView,
     WebsiteAssistantHistoryView,
     WebsiteAssistantMessageView,
+    WebsiteAssistantConversationView,
     WebsiteCartClearView,
     WebsiteCartItemView,
     WebsiteCartView,
@@ -47,6 +48,11 @@ urlpatterns = [
         "store/assistant/history/",
         WebsiteAssistantHistoryView.as_view(),
         name="website-assistant-history",
+    ),
+    path(
+        "store/assistant/conversations/",
+        WebsiteAssistantConversationView.as_view(),
+        name="website-assistant-conversation",
     ),
     path(
         "order-assistant/<uuid:event_id>/",

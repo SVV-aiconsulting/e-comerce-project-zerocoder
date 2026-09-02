@@ -170,3 +170,39 @@ def test_yandex_delivery_rejects_cash_payment(customer, product, settings):
 
     assert result.status == OrderDraftStatus.NEEDS_CLARIFICATION
     assert "delivery_payment_method" in result.missing_fields
+
+
+@pytest.mark.django_db
+def test_greeting_never_attempts_order_preview(customer):
+    draft, _ = OrderDraftService.get_or_create_active(
+        customer=customer,
+        channel=Channel.TELEGRAM,
+        external_user_id="greeting-user",
+        conversation_key="greeting-conversation",
+    )
+
+    result = DraftExtractionApplier.apply(
+        draft,
+        extraction(intent="unknown", items=[]),
+    )
+
+    assert result.status == OrderDraftStatus.NEEDS_CLARIFICATION
+    assert result.missing_fields == ["assistant_intent"]
+
+
+@pytest.mark.django_db
+def test_product_question_without_order_intent_stays_in_consultation(customer, product):
+    draft, _ = OrderDraftService.get_or_create_active(
+        customer=customer,
+        channel=Channel.TELEGRAM,
+        external_user_id="question-user",
+        conversation_key="question-conversation",
+    )
+
+    result = DraftExtractionApplier.apply(
+        draft,
+        extraction(intent="product_question"),
+    )
+
+    assert result.status == OrderDraftStatus.NEEDS_CLARIFICATION
+    assert result.missing_fields == ["sales_intent"]

@@ -42,14 +42,18 @@ class DraftExtractionApplier:
             return locked
 
         cls._apply_scalar_fields(locked, extraction)
-        if extraction.intent in (OrderIntent.CREATE_ORDER, OrderIntent.MODIFY_ORDER):
+        if extraction.intent in (
+            OrderIntent.CREATE_ORDER,
+            OrderIntent.MODIFY_ORDER,
+            OrderIntent.PRODUCT_QUESTION,
+        ) and extraction.items:
             cls._replace_items(locked, extraction.items)
 
         missing_fields = cls._collect_missing_fields(locked, extraction)
         locked.missing_fields = missing_fields
         locked.status = (
             OrderDraftStatus.NEEDS_CLARIFICATION
-            if missing_fields or extraction.clarification_needed
+            if missing_fields
             else OrderDraftStatus.READY_FOR_PREVIEW
         )
         locked.save(
@@ -120,9 +124,37 @@ class DraftExtractionApplier:
 
     @staticmethod
     def _collect_missing_fields(draft, extraction):
-        missing = list(extraction.missing_fields)
-        if draft.customer_id is None:
-            missing.append("customer")
+        # Порядок — это управляемый sales-сценарий: сначала состав заказа,
+        # затем получение, доставка, оплата и только перед оформлением контакт.
+        missing = []
+        items = list(draft.items.order_by("line_number"))
+        if not items and extraction.intent in (
+            OrderIntent.CREATE_ORDER,
+            OrderIntent.MODIFY_ORDER,
+            OrderIntent.PRODUCT_QUESTION,
+        ):
+            missing.append("items")
+        for index, item in enumerate(items):
+            prefix = f"items.{index}"
+            if item.match_status != ItemMatchStatus.MATCHED:
+                missing.append(f"{prefix}.product")
+            if item.requested_quantity is None:
+                missing.append(f"{prefix}.quantity")
+            if not item.requested_unit:
+                missing.append(f"{prefix}.unit")
+            if item.validation_errors:
+                missing.append(f"{prefix}.validation")
+
+        # Информационный вопрос по каталогу не запускает оформление сам по себе.
+        if extraction.intent == OrderIntent.PRODUCT_QUESTION:
+            if not missing:
+                missing.append("sales_intent")
+            return list(dict.fromkeys(missing))
+
+        if extraction.intent == OrderIntent.ORDER_STATUS:
+            return ["order_status"]
+        if extraction.intent not in (OrderIntent.CREATE_ORDER, OrderIntent.MODIFY_ORDER):
+            return ["assistant_intent"]
         if not draft.receiving_type:
             missing.append("receiving_type")
         if (
@@ -144,23 +176,8 @@ class DraftExtractionApplier:
             and draft.payment_method == "cash_on_delivery"
         ):
             missing.append("delivery_payment_method")
+        if draft.customer_id is None:
+            missing.append("customer")
         if draft.desired_date and draft.desired_date < timezone.localdate():
             missing.append("desired_date")
-
-        items = list(draft.items.order_by("line_number"))
-        if not items and extraction.intent in (
-            OrderIntent.CREATE_ORDER,
-            OrderIntent.MODIFY_ORDER,
-        ):
-            missing.append("items")
-        for index, item in enumerate(items):
-            prefix = f"items.{index}"
-            if item.match_status != ItemMatchStatus.MATCHED:
-                missing.append(f"{prefix}.product")
-            if item.requested_quantity is None:
-                missing.append(f"{prefix}.quantity")
-            if not item.requested_unit:
-                missing.append(f"{prefix}.unit")
-            if item.validation_errors:
-                missing.append(f"{prefix}.validation")
         return list(dict.fromkeys(missing))

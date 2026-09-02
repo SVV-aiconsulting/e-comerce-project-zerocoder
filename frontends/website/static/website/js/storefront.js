@@ -167,6 +167,11 @@
       return;
     }
 
+    if (event.target.closest("[data-new-assistant]")) {
+      startNewAssistantConversation();
+      return;
+    }
+
     const step = event.target.closest("[data-qty-step]");
     if (step) {
       const card = step.closest("[data-product-id]");
@@ -274,6 +279,15 @@
   const assistantSubmit = document.querySelector("[data-assistant-submit]");
   let assistantHistoryLoaded = false;
 
+  function renderAssistantGreeting() {
+    if (!assistantMessages) return;
+    assistantMessages.innerHTML = "";
+    appendAssistantMessage(
+      "assistant",
+      "Здравствуйте! Напишите, что хотите заказать. Помогу выбрать товары из каталога, рассчитать доставку и оформить оплату."
+    );
+  }
+
   function appendAssistantMessage(role, message, actionUrl = "") {
     if (!assistantMessages) return;
     const item = document.createElement("article");
@@ -327,6 +341,23 @@
 
   function closeAssistant() {
     assistantDialog?.close();
+  }
+
+  async function startNewAssistantConversation() {
+    if (!assistantMessages) return;
+    try {
+      await request("/store/assistant/conversations/", {
+        method: "POST",
+        body: "{}",
+      });
+      assistantHistoryLoaded = true;
+      assistantError.hidden = true;
+      renderAssistantGreeting();
+      assistantForm?.message.focus();
+    } catch (error) {
+      assistantError.hidden = false;
+      assistantError.textContent = error.message;
+    }
   }
 
   async function waitForAssistantEvent(eventId) {

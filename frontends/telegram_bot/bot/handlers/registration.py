@@ -7,9 +7,13 @@ from aiogram.types import Message
 
 from bot.api.client import StorefrontApiClient
 from bot.api.errors import ApiError, BackendUnavailableError
-from bot.constants import REGISTRATION_REMINDER_TEXT, REGISTRATION_TEXT, WRONG_CONTACT_TEXT
+from bot.constants import (
+    AI_ASSISTANT_WELCOME,
+    REGISTRATION_REMINDER_TEXT,
+    REGISTRATION_TEXT,
+    WRONG_CONTACT_TEXT,
+)
 from bot.services.error_messages import CONFLICT_USER_MESSAGE, is_phone_validation_error
-from bot.handlers.catalog import show_catalog
 from bot.handlers.common import answer_api_error, telegram_user_context
 from bot.keyboards.reply import main_menu_keyboard, registration_contact_keyboard, remove_keyboard
 from bot.services.session import apply_identify_response, get_session, save_session
@@ -89,10 +93,9 @@ async def on_contact(
     name = session.get("display_name") or "друг"
     await message.answer(
         f"Регистрация завершена. Здравствуйте, {name}!",
-        reply_markup=remove_keyboard(),
+        reply_markup=main_menu_keyboard(),
     )
-    await message.answer("Каталог:", reply_markup=main_menu_keyboard())
-    await show_catalog(message, state, api, user_id=message.from_user.id)
+    await message.answer(AI_ASSISTANT_WELCOME, reply_markup=main_menu_keyboard())
 
 
 @router.message(RegistrationStates.waiting_contact)
