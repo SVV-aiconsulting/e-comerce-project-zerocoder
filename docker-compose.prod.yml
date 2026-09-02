@@ -191,7 +191,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import urllib.request; urllib.request.urlopen('http://nginx/api/health/')\"",
+          "python -c \"import urllib.request; urllib.request.urlopen('http://web:8000/api/health/')\"",
         ]
       interval: 30s
       timeout: 10s
@@ -220,7 +220,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "python -c \"import os, urllib.request; urllib.request.urlopen(os.environ.get('BACKEND_API_BASE_URL','http://nginx') + '/api/health/')\"",
+          "python -c \"import os, urllib.request; urllib.request.urlopen(os.environ.get('BACKEND_API_BASE_URL','http://web:8000') + '/api/health/')\"",
         ]
       interval: 30s
       timeout: 10s

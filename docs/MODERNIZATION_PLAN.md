@@ -418,6 +418,11 @@ workflow CI/CD и конфигурация PostgreSQL не изменялись.
 - [x] добавлен интеграционный тест полного диалога до заказа и payment link;
 - [x] обнаружена production-причина отказа: пустой `GIGACHAT_CREDENTIALS`
   перекрывал заполненный `GIGACHAT_TOKEN`; fallback исправлен без раскрытия секрета.
+- [x] доверенный корневой сертификат GigaChat включён в Docker-образ, а пустой
+  `GIGACHAT_CA_BUNDLE` больше не отключает безопасный fallback; TLS-проверка
+  остаётся обязательной;
+- [x] healthcheck Telegram/VK обращается напрямую к внутреннему Django API и не
+  следует HTTPS-редиректу nginx с несовпадающим внутренним hostname.
 
 ## 5. Приоритеты
 
@@ -489,3 +494,5 @@ workflow CI/CD и конфигурация PostgreSQL не изменялись.
 | 02.09.2026 | AI-консультант вынесен в отдельный сервисный слой; LangChain/Haystack не требуются для детерминированного MVP |
 | 02.09.2026 | Telegram и website используют один order-assistant workflow; LLM только извлекает факты, бизнес-действия выполняет backend |
 | 02.09.2026 | Website хранит отдельный текущий conversation key и позволяет начать новый диалог без изменения CRM identity или корзины |
+| 02.09.2026 | Для production GigaChat используется поставляемый с образом доверенный CA bundle; отключение TLS verification запрещено |
+| 02.09.2026 | Healthcheck ботов проверяет Django по внутреннему `web:8000`, не публичный TLS-контур nginx |

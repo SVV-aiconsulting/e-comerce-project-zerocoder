@@ -267,10 +267,23 @@ GIGACHAT_AUTH_URL = env(
     "GIGACHAT_AUTH_URL",
     default="https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
 )
-_LOCAL_GIGACHAT_CA_BUNDLE = BASE_DIR / ".local" / "certs" / "russian_trusted_root_ca_pem.crt"
-GIGACHAT_CA_BUNDLE = env(
-    "GIGACHAT_CA_BUNDLE",
-    default=str(_LOCAL_GIGACHAT_CA_BUNDLE) if _LOCAL_GIGACHAT_CA_BUNDLE.is_file() else "",
+_PACKAGED_GIGACHAT_CA_BUNDLE = (
+    BASE_DIR / "deploy" / "certs" / "russian_trusted_root_ca_pem.crt"
+)
+_LOCAL_GIGACHAT_CA_BUNDLE = (
+    BASE_DIR / ".local" / "certs" / "russian_trusted_root_ca_pem.crt"
+)
+_DEFAULT_GIGACHAT_CA_BUNDLE = next(
+    (
+        str(path)
+        for path in (_PACKAGED_GIGACHAT_CA_BUNDLE, _LOCAL_GIGACHAT_CA_BUNDLE)
+        if path.is_file()
+    ),
+    "",
+)
+GIGACHAT_CA_BUNDLE = (
+    env("GIGACHAT_CA_BUNDLE", default="").strip()
+    or _DEFAULT_GIGACHAT_CA_BUNDLE
 )
 GIGACHAT_VERIFY_SSL = env("GIGACHAT_VERIFY_SSL")
 GIGACHAT_TIMEOUT_SECONDS = env("GIGACHAT_TIMEOUT_SECONDS")
