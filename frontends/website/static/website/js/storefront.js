@@ -285,12 +285,23 @@
 
   const checkoutForm = document.querySelector("[data-checkout-form]");
   const addressField = document.querySelector("[data-address-field]");
+  const receiptEmailField = checkoutForm?.querySelector('[name="email"]');
+  const receiptEmailMark = document.querySelector("[data-receipt-email-mark]");
+
+  const syncReceiptEmailRequirement = () => {
+    if (!checkoutForm || !receiptEmailField) return;
+    const isOnlinePayment = checkoutForm.payment_method.value === "card_prepayment";
+    receiptEmailField.required = isOnlinePayment;
+    if (receiptEmailMark) receiptEmailMark.hidden = !isOnlinePayment;
+  };
+
   checkoutForm?.receiving_type.addEventListener("change", () => {
     addressField.hidden = checkoutForm.receiving_type.value === "pickup";
     clearDeliveryQuote();
     refreshPreview();
   });
   checkoutForm?.payment_method.addEventListener("change", () => {
+    syncReceiptEmailRequirement();
     clearDeliveryQuote();
     refreshPreview();
   });
@@ -301,6 +312,8 @@
   });
   checkoutForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    syncReceiptEmailRequirement();
+    if (!checkoutForm.reportValidity()) return;
     const errorNode = document.querySelector("[data-checkout-error]");
     const resultNode = document.querySelector("[data-order-result]");
     errorNode.hidden = true;
@@ -469,5 +482,6 @@
   });
 
   loadCatalogFromBackend();
+  syncReceiptEmailRequirement();
   refreshCart().then(refreshPreview).catch(() => undefined);
 })();

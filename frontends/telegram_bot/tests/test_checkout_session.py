@@ -159,6 +159,7 @@ async def test_card_online_order_returns_yookassa_link():
         "delivery_quote_id": 77,
         "delivery_confirmed": True,
         "payment_method": "card_prepayment",
+        "checkout_email": "buyer@example.com",
         "customer_comment": "",
         "checkout_preview": {"total_amount": "1420.00"},
     }
@@ -182,6 +183,7 @@ async def test_card_online_order_returns_yookassa_link():
         await callback_confirm_order(callback, state, api)
 
     assert api.create_order.await_args.args[0]["delivery_quote_id"] == 77
+    assert api.create_order.await_args.args[0]["customer_email"] == "buyer@example.com"
     api.create_payment.assert_awaited_once_with(
         "WM-TEST-1",
         channel="telegram",
@@ -190,3 +192,62 @@ async def test_card_online_order_returns_yookassa_link():
     messages = [call.args[0] for call in callback.message.answer.await_args_list]
     assert any("Ваш заказ оформлен" in text for text in messages)
     assert any("перейдите по ссылке" in text for text in messages)
+
+
+@pytest.mark.asyncio
+async def test_card_online_requests_email_for_receipt():
+    from bot.handlers.checkout import callback_checkout_payment
+
+    session = {
+        "external_user_id": "12345",
+        "customer_id": 1,
+        "receiving_type": "pickup",
+        "payment_method": None,
+    }
+    state = FakeFSMContext({SESSION_KEY: session})
+    callback = _make_callback()
+    callback.data = "checkout:pay:card_prepayment"
+    api = AsyncMock()
+
+    with patch(
+        "bot.handlers.checkout.require_identified_callback",
+        new_callable=AsyncMock,
+        return_value=session,
+    ):
+        await callback_checkout_payment(callback, state, api)
+
+    assert state._data[SESSION_KEY]["payment_method"] == "card_prepayment"
+    callback.message.answer.assert_awaited_once()
+    assert "email для электронного чека" in callback.message.answer.await_args.args[0]
+
+
+@pytest.mark.asyncio
+async def test_receipt_email_is_saved_before_order_confirmation():
+    from bot.handlers.checkout import on_receipt_email
+
+    session = {
+        "external_user_id": "12345",
+        "customer_id": 1,
+        "receiving_type": "pickup",
+        "payment_method": "card_prepayment",
+        "username": "buyer",
+        "display_name": "Покупатель",
+    }
+    state = FakeFSMContext({SESSION_KEY: session})
+    message = _make_message("Buyer@Example.com")
+    api = AsyncMock()
+    api.identify_customer.return_value = {"status": "identified"}
+
+    await on_receipt_email(message, state, api)
+
+    assert state._data[SESSION_KEY]["checkout_email"] == "buyer@example.com"
+    api.identify_customer.assert_awaited_once_with(
+        {
+            "channel": "telegram",
+            "external_user_id": "12345",
+            "email": "Buyer@Example.com",
+            "username": "buyer",
+            "display_name": "Покупатель",
+        }
+    )
+    assert "Добавьте комментарий" in message.answer.await_args.args[0]

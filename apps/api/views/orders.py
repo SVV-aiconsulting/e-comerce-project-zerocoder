@@ -17,10 +17,11 @@ from apps.api.serializers.orders import (
     OrderListSerializer,
     OrderSerializer,
 )
-from apps.common.enums import StatusChangeSource
+from apps.common.enums import PaymentMethod, StatusChangeSource
 from apps.delivery.checkout import CheckoutDeliveryService
 from apps.orders import selectors as order_selectors
 from apps.orders.services import OrderService
+from apps.payments.exceptions import PaymentDataError
 
 
 class CreateOrderView(APIView):
@@ -44,6 +45,12 @@ class CreateOrderView(APIView):
             external_user_id=data["external_user_id"],
             customer=customer,
         )
+        if data["payment_method"] == PaymentMethod.CARD_PREPAYMENT and not (
+            data.get("customer_email") or customer.email
+        ):
+            raise PaymentDataError(
+                "Для онлайн-оплаты укажите email: на него ЮKassa отправит электронный чек"
+            )
         quote = CheckoutDeliveryService.selected_quote(
             cart=cart,
             receiving_type=data["receiving_type"],
@@ -66,6 +73,7 @@ class CreateOrderView(APIView):
             desired_time_interval=data.get("desired_time_interval", ""),
             delivery_address=data.get("delivery_address", ""),
             customer_comment=data.get("customer_comment", ""),
+            customer_email_snapshot=data.get("customer_email") or None,
             delivery_cost_override=delivery_cost_override,
             is_new_customer=data.get("is_new_customer", False),
             status_source=StatusChangeSource.API,

@@ -31,7 +31,12 @@ def _checkout_ready_for_preview(session: dict) -> bool:
 
 
 def _checkout_ready_for_confirm(session: dict) -> bool:
-    return bool(session.get("receiving_type") and session.get("payment_method"))
+    if not (session.get("receiving_type") and session.get("payment_method")):
+        return False
+    return (
+        session.get("payment_method") != "card_prepayment"
+        or bool(session.get("checkout_email"))
+    )
 
 
 async def _answer_checkout_stale(target: Message | CallbackQuery) -> None:
@@ -112,6 +117,7 @@ async def callback_checkout_start(callback: CallbackQuery, state: FSMContext, ap
         checkout_preview=None,
         delivery_quote_id=None,
         delivery_confirmed=False,
+        checkout_email="",
     )
 
     await callback.message.answer(
@@ -150,6 +156,14 @@ async def _show_payment_methods(message: Message, api) -> None:
     await message.answer(
         "Выберите способ оплаты:",
         reply_markup=payment_method_keyboard(meta["payment_methods"]),
+    )
+
+
+async def _ask_for_comment(message: Message, state: FSMContext) -> None:
+    await state.set_state(CheckoutStates.entering_comment)
+    await message.answer(
+        "Добавьте комментарий к заказу или нажмите «Пропустить»: ",
+        reply_markup=skip_comment_keyboard(),
     )
 
 
@@ -246,12 +260,45 @@ async def callback_checkout_payment(callback: CallbackQuery, state: FSMContext, 
         await callback.answer("Сначала подтвердите параметры доставки", show_alert=True)
         return
     await update_session(state, payment_method=payment_method)
-    await state.set_state(CheckoutStates.entering_comment)
-    await callback.message.answer(
-        "Добавьте комментарий к заказу или нажмите «Пропустить»:",
-        reply_markup=skip_comment_keyboard(),
-    )
+    if payment_method == "card_prepayment":
+        await state.set_state(CheckoutStates.entering_receipt_email)
+        await callback.message.answer(
+            "Укажите email для электронного чека. Его получит только ЮKassa для отправки чека:"
+        )
+    else:
+        await _ask_for_comment(callback.message, state)
     await callback.answer()
+
+
+@router.message(CheckoutStates.entering_receipt_email)
+async def on_receipt_email(message: Message, state: FSMContext, api) -> None:
+    session = await get_session(state, str(message.from_user.id))
+    if not _checkout_ready_for_preview(session) or session.get("payment_method") != "card_prepayment":
+        await _answer_checkout_stale(message)
+        await state.set_state(None)
+        return
+
+    email = (message.text or "").strip()
+    try:
+        response = await api.identify_customer(
+            {
+                "channel": CHANNEL,
+                "external_user_id": session["external_user_id"],
+                "email": email,
+                "username": session.get("username", ""),
+                "display_name": session.get("display_name", ""),
+            }
+        )
+    except (ApiError, BackendUnavailableError) as exc:
+        await answer_api_error(message, exc)
+        await message.answer("Проверьте email и отправьте его ещё раз.")
+        return
+    if response.get("status") != "identified":
+        await message.answer("Не удалось сохранить email. Отправьте корректный адрес ещё раз.")
+        return
+
+    await update_session(state, checkout_email=email.lower())
+    await _ask_for_comment(message, state)
 
 
 @router.callback_query(F.data == "checkout:skip_comment")
@@ -338,6 +385,7 @@ async def callback_confirm_order(callback: CallbackQuery, state: FSMContext, api
         "payment_method": session["payment_method"],
         "delivery_address": session.get("delivery_address") or "",
         "customer_comment": session.get("customer_comment") or "",
+        "customer_email": session.get("checkout_email") or "",
         "delivery_quote_id": session.get("delivery_quote_id"),
         "is_new_customer": session.get("is_new_customer", False),
     }
@@ -389,5 +437,6 @@ async def callback_confirm_order(callback: CallbackQuery, state: FSMContext, api
         checkout_preview=None,
         delivery_quote_id=None,
         delivery_confirmed=False,
+        checkout_email="",
     )
     await callback.answer()
