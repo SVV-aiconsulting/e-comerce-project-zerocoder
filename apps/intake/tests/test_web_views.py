@@ -266,6 +266,35 @@ def test_website_cart_and_checkout_go_through_backend(client):
 
 
 @pytest.mark.django_db
+def test_website_online_checkout_requires_email_for_receipt(client):
+    call_command("load_demo_data")
+    product = Product.objects.get(public_code="DEMO-SALMON")
+    client.put(
+        f"/store/cart/items/{product.id}/",
+        data=json.dumps({"quantity": "0.5"}),
+        content_type="application/json",
+    )
+
+    response = client.post(
+        "/store/orders/",
+        data=json.dumps(
+            {
+                "name": "Анна Покупатель",
+                "phone": "+7 999 123-45-67",
+                "receiving_type": "pickup",
+                "payment_method": "card_prepayment",
+                "personal_data_consent": True,
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 400
+    assert "email" in response.json()["error"]["message"].lower()
+    assert not Order.objects.filter(channel=Channel.WEBSITE).exists()
+
+
+@pytest.mark.django_db
 def test_website_delivery_preview_is_dynamic_and_quote_is_used_by_order(
     client,
     settings,

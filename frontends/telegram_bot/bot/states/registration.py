@@ -7,4 +7,5 @@ class RegistrationStates(StatesGroup):
 
 class CheckoutStates(StatesGroup):
     entering_address = State()
+    entering_receipt_email = State()
     entering_comment = State()

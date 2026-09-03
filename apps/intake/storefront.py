@@ -251,6 +251,12 @@ class WebsiteCreateOrderView(WebsiteApiView):
             return json_error("Некорректный способ получения.")
         if payment_method not in PaymentMethod.values:
             return json_error("Некорректный способ оплаты.")
+        if payment_method == PaymentMethod.CARD_PREPAYMENT and not str(
+            payload.get("email") or ""
+        ).strip():
+            return json_error(
+                "Для онлайн-оплаты укажите email: на него ЮKassa отправит электронный чек."
+            )
         if receiving_type == ReceivingType.DELIVERY and not str(
             payload.get("delivery_address") or ""
         ).strip():
@@ -277,6 +283,9 @@ class WebsiteCreateOrderView(WebsiteApiView):
             payment_method=payment_method,
             delivery_address=str(payload.get("delivery_address") or "").strip(),
             customer_comment=str(payload.get("customer_comment") or "").strip(),
+            customer_email_snapshot=normalize_email(str(payload.get("email") or ""))
+            if str(payload.get("email") or "").strip()
+            else None,
             delivery_cost_override=delivery_cost_override,
             is_new_customer=identity.is_new_customer,
             status_source=StatusChangeSource.WEBSITE,

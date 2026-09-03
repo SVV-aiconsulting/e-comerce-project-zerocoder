@@ -91,6 +91,15 @@ class Payment(TimeStampedModel):
     cancellation_code = models.CharField(max_length=128, blank=True)
     cancellation_description = models.TextField(blank=True)
     receipt_data = models.JSONField(default=dict, blank=True, verbose_name="Данные чека")
+    receipt_registration_status = models.CharField(
+        max_length=32,
+        blank=True,
+        verbose_name="Статус регистрации чека",
+    )
+    receipt_registration_error = models.TextField(
+        blank=True,
+        verbose_name="Ошибка регистрации чека",
+    )
     provider_payload = models.JSONField(default=dict, blank=True, verbose_name="Ответ ЮKassa")
     last_error = models.TextField(blank=True, verbose_name="Последняя ошибка")
     paid_notification_sent_at = models.DateTimeField(

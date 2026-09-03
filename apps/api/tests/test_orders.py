@@ -47,6 +47,29 @@ def test_create_order(api_client, customer, product, active_cart, delivery_rule)
 
 
 @pytest.mark.django_db
+def test_online_order_keeps_email_for_yookassa_receipt(
+    api_client, customer, product, active_cart, delivery_rule
+):
+    CartService.set_item_quantity(active_cart, product, Decimal("1"))
+
+    response = api_client.post(
+        "/api/orders/",
+        {
+            "channel": Channel.TELEGRAM,
+            "external_user_id": "12345",
+            "customer_id": customer.pk,
+            "receiving_type": ReceivingType.PICKUP,
+            "payment_method": PaymentMethod.CARD_PREPAYMENT,
+            "customer_email": "receipt@example.com",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201
+    assert response.data["customer_email_snapshot"] == "receipt@example.com"
+
+
+@pytest.mark.django_db
 def test_get_order_by_number(api_client, customer, product, active_cart, delivery_rule):
     CartService.set_item_quantity(active_cart, product, Decimal("1"))
     create_response = api_client.post(

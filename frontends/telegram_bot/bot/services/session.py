@@ -29,6 +29,7 @@ def _empty_session(external_user_id: str, username: str = "", display_name: str 
         "checkout_preview": None,
         "delivery_quote_id": None,
         "delivery_confirmed": False,
+        "checkout_email": "",
         "cart_ui": None,
     }
 
@@ -71,6 +72,8 @@ def apply_identify_response(session: dict, response: dict) -> dict:
     session["customer_id"] = response.get("customer_id")
     session["customer_public_code"] = response.get("customer_public_code")
     session["is_new_customer"] = response.get("is_new_customer", False)
+    if response.get("email"):
+        session["email"] = response["email"]
     if response.get("display_name"):
         session["display_name"] = response["display_name"]
     if response.get("external_user_id"):

@@ -3,14 +3,14 @@ import hashlib
 import ipaddress
 import json
 from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.conf import settings
 from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from apps.common.enums import PaymentMethod, PaymentStatus
+from apps.common.enums import PaymentMethod, PaymentStatus, ProductUnit
 from apps.payments.exceptions import PaymentDataError, YooKassaAPIError
 from apps.payments.models import (
     Payment,
@@ -35,7 +35,16 @@ YOOKASSA_NETWORKS = tuple(
         "2a02:5180::/32",
     )
 )
-VALID_VAT_CODES = {1, 2, 3, 4, 5, 6}
+# ЮKassa с 01.01.2026 поддерживает также ставки 22% и 22/122 (11, 12).
+VALID_VAT_CODES = set(range(1, 13))
+VALID_TAX_SYSTEM_CODES = set(range(1, 7))
+RECEIPT_MEASURE_BY_PRODUCT_UNIT = {
+    ProductUnit.KG: "kilogram",
+    ProductUnit.PIECE: "piece",
+    # Упаковка не имеет отдельной меры в API ЮKassa, поэтому указывается как штука.
+    ProductUnit.PACKAGE: "piece",
+}
+MONEY_QUANT = Decimal("0.01")
 
 
 def _money(value, *, field: str) -> Decimal:
@@ -76,27 +85,51 @@ def _refund_state(value: str) -> str:
 
 def _receipt_for_order(order, *, payment_mode: str) -> dict:
     if settings.YOOKASSA_DEFAULT_VAT_CODE not in VALID_VAT_CODES:
-        raise PaymentDataError("YOOKASSA_DEFAULT_VAT_CODE должен быть числом от 1 до 6")
-    customer = {}
-    if order.customer_email_snapshot:
-        customer["email"] = order.customer_email_snapshot
-    elif order.customer_phone_snapshot:
-        customer["phone"] = f"+{order.customer_phone_snapshot}"
-    else:
+        raise PaymentDataError("YOOKASSA_DEFAULT_VAT_CODE должен быть числом от 1 до 12")
+    if not order.customer_email_snapshot:
         raise PaymentDataError(
-            "Для формирования чека нужен email или телефон покупателя"
+            "Для онлайн-оплаты укажите email: ЮKassa доставляет электронный чек только на email"
         )
 
+    tax_system_code = settings.YOOKASSA_TAX_SYSTEM_CODE
+    if tax_system_code and tax_system_code not in VALID_TAX_SYSTEM_CODES:
+        raise PaymentDataError("YOOKASSA_TAX_SYSTEM_CODE должен быть числом от 1 до 6")
+
     items = []
-    for item in order.items.all().order_by("id"):
+    order_items = list(order.items.all().order_by("id"))
+    if not order_items:
+        raise PaymentDataError("Нельзя сформировать чек для заказа без товаров")
+
+    # Скидка хранится на заказе, а ЮKassa требует, чтобы сумма receipt совпадала
+    # с суммой платежа. Распределяем её по товарным строкам пропорционально.
+    remaining_discount = Decimal(order.discount_amount).quantize(MONEY_QUANT)
+    for index, item in enumerate(order_items):
+        if not remaining_discount:
+            line_discount = Decimal("0.00")
+        elif index == len(order_items) - 1:
+            line_discount = remaining_discount
+        else:
+            share = Decimal(item.total_price) / Decimal(order.items_total)
+            line_discount = (Decimal(order.discount_amount) * share).quantize(
+                MONEY_QUANT,
+                rounding=ROUND_HALF_UP,
+            )
+            remaining_discount -= line_discount
+        line_total = (Decimal(item.total_price) - line_discount).quantize(MONEY_QUANT)
+        quantity = Decimal(item.quantity)
+        unit_amount = (line_total / quantity).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
         items.append(
             {
                 "description": item.product_name_snapshot[:128],
-                "quantity": str(item.quantity),
-                "amount": {"value": f"{item.total_price:.2f}", "currency": "RUB"},
+                "quantity": str(quantity),
+                "amount": {"value": f"{unit_amount:.2f}", "currency": "RUB"},
                 "vat_code": settings.YOOKASSA_DEFAULT_VAT_CODE,
                 "payment_mode": payment_mode,
                 "payment_subject": "commodity",
+                "measure": RECEIPT_MEASURE_BY_PRODUCT_UNIT.get(
+                    item.product_unit_snapshot,
+                    "piece",
+                ),
             }
         )
     if order.delivery_cost:
@@ -108,9 +141,28 @@ def _receipt_for_order(order, *, payment_mode: str) -> dict:
                 "vat_code": settings.YOOKASSA_DEFAULT_VAT_CODE,
                 "payment_mode": payment_mode,
                 "payment_subject": "service",
+                "measure": "piece",
             }
         )
-    return {"customer": customer, "items": items}
+    receipt_total = sum(
+        (
+            Decimal(receipt_item["quantity"]) * Decimal(receipt_item["amount"]["value"])
+            for receipt_item in items
+        ),
+        start=Decimal("0.00"),
+    ).quantize(MONEY_QUANT)
+    if receipt_total != Decimal(order.total_amount).quantize(MONEY_QUANT):
+        raise PaymentDataError(
+            "Не удалось точно распределить скидку по строкам чека; проверьте цены и количество"
+        )
+
+    receipt = {
+        "customer": {"email": order.customer_email_snapshot},
+        "items": items,
+    }
+    if tax_system_code:
+        receipt["tax_system_code"] = tax_system_code
+    return receipt
 
 
 def _payment_payload(payment: Payment) -> dict:
@@ -211,6 +263,15 @@ class PaymentService:
             payment.cancellation_description = str(cancellation.get("reason", ""))
             payment.provider_payload = payload
             payment.last_error = ""
+            receipt_registration = payload.get("receipt_registration")
+            receipt_registration = (
+                receipt_registration if isinstance(receipt_registration, dict) else {}
+            )
+            payment.receipt_registration_status = str(receipt_registration.get("status", ""))
+            payment.receipt_registration_error = str(
+                receipt_registration.get("error", "")
+                or receipt_registration.get("description", "")
+            )[:1000]
             payment.save()
             cls._sync_order_payment_status(payment.order, payment.state)
             if payment.state == PaymentState.SUCCEEDED and not was_paid:
