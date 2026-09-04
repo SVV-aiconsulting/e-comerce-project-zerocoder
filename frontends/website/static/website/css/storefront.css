@@ -755,6 +755,47 @@ textarea {
   align-items: stretch;
 }
 
+.catalog-cart-controls {
+  display: grid;
+  grid-template-columns: 40px minmax(118px, 1fr) 40px;
+  gap: 8px;
+  align-items: stretch;
+  width: 100%;
+}
+
+.catalog-step,
+.cart-line__actions > button:not(.cart-remove) {
+  width: 40px;
+  min-width: 40px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--foam);
+  cursor: pointer;
+}
+
+.catalog-step:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.catalog-add {
+  min-height: 44px;
+  padding: 7px 14px;
+}
+
+.catalog-add.is-in-cart {
+  flex-direction: column;
+  gap: 0;
+  line-height: 1.06;
+}
+
+.catalog-add.is-in-cart small {
+  font-size: 0.73rem;
+  font-weight: 650;
+}
+
 .qty {
   display: flex;
   align-items: center;
@@ -805,6 +846,55 @@ textarea {
   gap: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.cart-line__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cart-remove {
+  width: auto;
+  min-width: max-content;
+  min-height: 44px;
+  padding: 10px 16px;
+  white-space: nowrap;
+}
+
+.cart-feedback {
+  position: fixed;
+  right: 24px;
+  bottom: 28px;
+  z-index: 12;
+  max-width: min(360px, calc(100% - 32px));
+  padding: 13px 17px;
+  border: 1px solid rgba(255, 107, 61, 0.52);
+  border-radius: 14px;
+  background: #152536;
+  color: var(--foam);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.cart-feedback.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.cart-toggle.is-updated {
+  animation: cart-pulse 0.52s ease;
+}
+
+@keyframes cart-pulse {
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 6px rgba(255, 107, 61, 0.2);
+  }
 }
 
 .totals {
@@ -886,5 +976,18 @@ textarea {
 
   .section-head {
     display: block;
+  }
+
+  .cart-line {
+    flex-direction: column;
+  }
+
+  .cart-line__actions {
+    justify-content: flex-start;
+  }
+
+  .cart-feedback {
+    right: 16px;
+    bottom: 16px;
   }
 }

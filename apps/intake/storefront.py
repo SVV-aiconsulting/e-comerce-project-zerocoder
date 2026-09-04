@@ -62,17 +62,28 @@ def get_or_create_assistant_conversation_key(request) -> str:
     return f"{get_or_create_website_user_id(request)}:assistant:{conversation_id}"
 
 
-def website_cart(request, customer=None):
-    return get_active_cart(
+def website_cart(request):
+    """Return a basket scoped to the browser, never to a CRM customer.
+
+    ``website_external_user_id`` is a technical browser-session key, not a customer
+    identity.  A public website has no sign-in, therefore a contact entered in the
+    checkout form must be resolved anew for each order.  Older active website carts
+    may have been linked during a preview; unlink them safely before reusing them.
+    """
+    cart = get_active_cart(
         channel=Channel.WEBSITE,
         external_user_id=get_or_create_website_user_id(request),
-        customer=customer,
+        customer=None,
     )
+    if cart.customer_id:
+        cart.customer = None
+        cart.save(update_fields=["customer", "updated_at"])
+    return cart
 
 
-def cart_payload(request, customer=None) -> dict:
+def cart_payload(request) -> dict:
     return CartSerializer(
-        website_cart(request, customer=customer),
+        website_cart(request),
         context={"request": request},
     ).data
 
@@ -167,7 +178,7 @@ class WebsiteApiView(View):
 @method_decorator(ensure_csrf_cookie, name="dispatch")
 class WebsiteCartView(WebsiteApiView):
     def get(self, request):
-        return JsonResponse(cart_payload(request, customer=session_customer(request)))
+        return JsonResponse(cart_payload(request))
 
 
 class WebsiteCartItemView(WebsiteApiView):
@@ -180,28 +191,25 @@ class WebsiteCartItemView(WebsiteApiView):
         product = CatalogService.get_product(product_id=product_id)
         if product is None or not product.is_active:
             return json_error("Товар недоступен.", code="product_unavailable", status=422)
-        customer = session_customer(request)
-        cart = website_cart(request, customer=customer)
+        cart = website_cart(request)
         if quantity <= 0:
             CartService.remove_item(cart, product)
         else:
             CartService.set_item_quantity(cart, product, quantity)
-        return JsonResponse(cart_payload(request, customer=customer))
+        return JsonResponse(cart_payload(request))
 
     def delete(self, request, product_id: int):
         product = CatalogService.get_product(product_id=product_id)
         if product is None:
             return json_error("Товар не найден.", code="product_not_found", status=404)
-        customer = session_customer(request)
-        CartService.remove_item(website_cart(request, customer=customer), product)
-        return JsonResponse(cart_payload(request, customer=customer))
+        CartService.remove_item(website_cart(request), product)
+        return JsonResponse(cart_payload(request))
 
 
 class WebsiteCartClearView(WebsiteApiView):
     def delete(self, request):
-        customer = session_customer(request)
-        CartService.clear(website_cart(request, customer=customer))
-        return JsonResponse(cart_payload(request, customer=customer))
+        CartService.clear(website_cart(request))
+        return JsonResponse(cart_payload(request))
 
 
 class WebsiteCheckoutPreviewView(WebsiteApiView):
@@ -210,10 +218,13 @@ class WebsiteCheckoutPreviewView(WebsiteApiView):
         receiving_type = payload.get("receiving_type") or ReceivingType.DELIVERY
         if receiving_type not in ReceivingType.values:
             return json_error("Некорректный способ получения.")
-        customer = session_customer(request)
+        # A previous visitor of the same browser session must not influence a new
+        # visitor's discount or identity.  The current form is the only source of
+        # identity in the manual website checkout.
+        customer = None
         if payload.get("phone") or payload.get("email"):
             customer = identify_from_payload(request, payload).customer
-        cart = website_cart(request, customer=customer)
+        cart = website_cart(request)
         preview = CheckoutDeliveryService.preview(
             cart=cart,
             customer=customer,
@@ -263,7 +274,7 @@ class WebsiteCreateOrderView(WebsiteApiView):
             return json_error("Для доставки укажите адрес.")
         identity = identify_from_payload(request, payload)
         customer = identity.customer
-        cart = website_cart(request, customer=customer)
+        cart = website_cart(request)
         quote = CheckoutDeliveryService.selected_quote(
             cart=cart,
             receiving_type=receiving_type,

@@ -12,6 +12,13 @@
       .replaceAll('"', "&quot;");
 
   const money = (value) => `${Number(value).toLocaleString("ru-RU")} ₽`;
+  const quantityFormatter = new Intl.NumberFormat("ru-RU", {
+    maximumFractionDigits: 3,
+  });
+  const formatQuantity = (value) => {
+    const quantity = Number(value);
+    return Number.isFinite(quantity) ? quantityFormatter.format(quantity) : String(value ?? "");
+  };
 
   const asQuantity = (value, min) => {
     const amount = Number(value);
@@ -19,6 +26,9 @@
     if (!Number.isFinite(amount) || amount <= 0) return floor;
     return Math.round(amount * 1000) / 1000;
   };
+
+  let currentCart = { items: [] };
+  let cartFeedbackTimer = null;
 
   async function request(url, options = {}) {
     const response = await fetch(url, {
@@ -66,28 +76,70 @@
           <div class="product-card__meta">
             <div class="price">
               ${escapeHtml(product.base_price)} ₽
-              <small>за ${escapeHtml(product.unit_label)}, от ${escapeHtml(product.min_quantity)}</small>
+              <small>за ${escapeHtml(product.unit_label)}, от ${escapeHtml(formatQuantity(product.min_quantity))}</small>
             </div>
-            <div class="qty-row">
-              <div class="qty">
-                <button type="button" data-qty-step="-">−</button>
-                <input type="text" inputmode="decimal" value="${escapeHtml(product.min_quantity)}" data-qty data-min="${escapeHtml(product.min_quantity)}" aria-label="Количество ${name}">
-                <button type="button" data-qty-step="+">+</button>
-              </div>
-              <button type="button" class="btn btn-primary" data-add-to-cart>В корзину</button>
+            <div class="catalog-cart-controls" data-min="${escapeHtml(product.min_quantity)}">
+              <button type="button" class="catalog-step" data-qty-step="-" aria-label="Уменьшить количество ${name}" disabled>−</button>
+              <button type="button" class="btn btn-primary catalog-add" data-add-to-cart>В корзину</button>
+              <button type="button" class="catalog-step" data-qty-step="+" aria-label="Увеличить количество ${name}">+</button>
             </div>
           </div>
         </div>
       </article>`;
       })
       .join("");
+    syncCatalogCartControls(currentCart);
+  }
+
+  function syncCatalogCartControls(cart) {
+    const itemsByProduct = new Map(
+      (cart.items || []).map((item) => [String(item.product.id), item])
+    );
+    document.querySelectorAll("[data-catalog-grid] [data-product-id]").forEach((card) => {
+      const item = itemsByProduct.get(String(card.dataset.productId));
+      const add = card.querySelector("[data-add-to-cart]");
+      const decrement = card.querySelector('[data-qty-step="-"]');
+      if (!add || !decrement) return;
+      decrement.disabled = !item;
+      add.classList.toggle("is-in-cart", Boolean(item));
+      if (item) {
+        const formattedQuantity = formatQuantity(item.quantity);
+        add.innerHTML = `<span>${escapeHtml(formattedQuantity)}</span><small>в корзине</small>`;
+        add.setAttribute("aria-label", `${formattedQuantity} в корзине`);
+      } else {
+        add.textContent = "В корзину";
+        add.setAttribute("aria-label", "Добавить в корзину");
+      }
+    });
+  }
+
+  function showCartFeedback(message) {
+    const feedback = document.querySelector("[data-cart-feedback]");
+    if (feedback) {
+      feedback.textContent = message;
+      feedback.hidden = false;
+      feedback.classList.remove("is-visible");
+      void feedback.offsetWidth;
+      feedback.classList.add("is-visible");
+      window.clearTimeout(cartFeedbackTimer);
+      cartFeedbackTimer = window.setTimeout(() => {
+        feedback.classList.remove("is-visible");
+      }, 2600);
+    }
+    const cartToggle = document.querySelector("[data-open-cart]");
+    if (cartToggle) {
+      cartToggle.classList.remove("is-updated");
+      void cartToggle.offsetWidth;
+      cartToggle.classList.add("is-updated");
+    }
   }
 
   function renderCart(cart) {
     const itemsNode = document.querySelector("[data-cart-items]");
     const emptyNode = document.querySelector("[data-cart-empty]");
     const countNode = document.querySelector("[data-cart-count]");
-    const items = cart.items || [];
+    currentCart = cart;
+    const items = currentCart.items || [];
     if (countNode) countNode.textContent = String(items.length);
     if (emptyNode) emptyNode.hidden = items.length > 0;
     if (!itemsNode) return;
@@ -98,12 +150,12 @@
         <article class="cart-line" data-product-id="${product.id}" data-min="${escapeHtml(product.min_quantity)}" data-quantity="${escapeHtml(item.quantity)}">
           <div>
             <strong>${escapeHtml(product.name)}</strong>
-            <p>${escapeHtml(item.quantity)} ${escapeHtml(product.unit_label)} · ${money(item.line_total)}</p>
+            <p>${escapeHtml(formatQuantity(item.quantity))} ${escapeHtml(product.unit_label)} · ${money(item.line_total)}</p>
           </div>
-          <div class="qty">
+          <div class="cart-line__actions">
             <button type="button" data-cart-step="-">−</button>
             <button type="button" data-cart-step="+">+</button>
-            <button type="button" class="btn btn-ghost" data-cart-remove>Удалить</button>
+            <button type="button" class="btn btn-ghost cart-remove" data-cart-remove>Удалить</button>
           </div>
         </article>`;
       })
@@ -113,6 +165,7 @@
       itemsTotal.textContent = money(cart.items_total || 0);
       itemsTotal.dataset.amount = String(cart.items_total || 0);
     }
+    syncCatalogCartControls(currentCart);
   }
 
   async function refreshCart() {
@@ -218,26 +271,47 @@
       return;
     }
 
-    const step = event.target.closest("[data-qty-step]");
-    if (step) {
-      const card = step.closest("[data-product-id]");
-      const input = card.querySelector("[data-qty]");
-      const min = Number(input.dataset.min || 1);
-      const next = asQuantity(Number(input.value || min) + (step.dataset.qtyStep === "+" ? min : -min), min);
-      input.value = String(Math.max(min, next));
+    const catalogStep = event.target.closest("[data-catalog-grid] [data-qty-step]");
+    if (catalogStep) {
+      const card = catalogStep.closest("[data-product-id]");
+      const min = Number(card.querySelector("[data-min]").dataset.min || 1);
+      const existing = currentCart.items.find(
+        (item) => String(item.product.id) === String(card.dataset.productId)
+      );
+      const current = existing ? Number(existing.quantity) : 0;
+      const next = catalogStep.dataset.qtyStep === "+" ? current + min : current - min;
+      try {
+        await setQuantity(
+          card.dataset.productId,
+          next <= 0 ? 0 : asQuantity(next, min)
+        );
+        const productName = card.querySelector("h3")?.textContent || "Товар";
+        showCartFeedback(
+          next <= 0
+            ? `${productName} удалён из корзины`
+            : `${productName}: ${formatQuantity(next)} в корзине`
+        );
+      } catch (error) {
+        window.alert(error.message);
+      }
       return;
     }
 
     const add = event.target.closest("[data-add-to-cart]");
     if (add) {
       const card = add.closest("[data-product-id]");
-      const input = card.querySelector("[data-qty]");
+      const min = Number(card.querySelector("[data-min]").dataset.min || 1);
       try {
-        const cart = await refreshCart();
-        const current = cart.items.find((item) => String(item.product.id) === String(card.dataset.productId));
-        const added = asQuantity(input.value, input.dataset.min);
-        const quantity = current ? asQuantity(Number(current.quantity) + added, input.dataset.min) : added;
-        await setQuantity(card.dataset.productId, quantity);
+        const existing = currentCart.items.find(
+          (item) => String(item.product.id) === String(card.dataset.productId)
+        );
+        if (existing) {
+          document.querySelector("#cart")?.scrollIntoView({ behavior: "smooth" });
+          return;
+        }
+        await setQuantity(card.dataset.productId, min);
+        const productName = card.querySelector("h3")?.textContent || "Товар";
+        showCartFeedback(`${productName} добавлен в корзину`);
       } catch (error) {
         window.alert(error.message);
       }
