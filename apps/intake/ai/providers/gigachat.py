@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 from django.conf import settings
 
-from apps.intake.ai.providers.base import StructuredCompletion
+from apps.intake.ai.providers.base import FunctionCall, StructuredCompletion, ToolCompletion
 from apps.intake.exceptions import LLMConfigurationError, LLMProviderError
 
 ALLOWED_SCOPES = {
@@ -192,6 +192,73 @@ class GigaChatProvider:
         return StructuredCompletion(
             raw_content=raw_content,
             model_name=str(model_name),
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+        )
+
+    def generate_with_tools(
+        self,
+        *,
+        system_prompt: str,
+        messages: list[dict],
+        functions: list[dict],
+    ) -> ToolCompletion:
+        """Один шаг нативного GigaChat function-calling без исполнения функций."""
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                *messages,
+            ],
+            "functions": functions,
+            "function_call": "auto",
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        response = self._chat(self._get_access_token(), payload)
+        if response.status_code == 401:
+            with self._token_lock:
+                self._access_token = ""
+                self._access_token_expires_at = 0
+            response = self._chat(self._get_access_token(), payload)
+        if response.status_code >= 400:
+            raise LLMProviderError(
+                f"GigaChat chat/completions вернул HTTP {response.status_code}"
+            )
+        try:
+            body = response.json()
+            message = body["choices"][0]["message"]
+            usage = body.get("usage", {})
+            model_name = str(body.get("model") or self.model)
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise LLMProviderError("GigaChat вернул некорректную структуру ответа") from exc
+
+        function_call = None
+        raw_call = message.get("function_call")
+        if raw_call is not None:
+            try:
+                name = str(raw_call["name"]).strip()
+                arguments = raw_call.get("arguments", {})
+                if isinstance(arguments, str):
+                    import json
+
+                    arguments = json.loads(arguments)
+                if not name or not isinstance(arguments, dict):
+                    raise ValueError
+            except (KeyError, TypeError, ValueError) as exc:
+                raise LLMProviderError("GigaChat вернул некорректный function_call") from exc
+            function_call = FunctionCall(
+                name=name,
+                arguments=arguments,
+                state_id=str(message.get("functions_state_id") or ""),
+            )
+        content = message.get("content") or ""
+        if not function_call and not str(content).strip():
+            raise LLMProviderError("GigaChat вернул пустой ответ")
+        return ToolCompletion(
+            content=str(content),
+            model_name=model_name,
+            function_call=function_call,
             input_tokens=usage.get("prompt_tokens"),
             output_tokens=usage.get("completion_tokens"),
         )

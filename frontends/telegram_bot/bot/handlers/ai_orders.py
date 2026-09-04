@@ -61,6 +61,9 @@ async def on_natural_order_message(
     response = result.get("response") or {}
     if response.get("message"):
         await message.answer(response["message"], parse_mode=None)
+        action_url = response.get("action_url") or ""
+        if action_url and action_url not in response["message"]:
+            await message.answer(action_url, parse_mode=None)
     else:
         await message.answer(
             "Запрос сохранён и ещё обрабатывается. Ответ появится после обработки; "

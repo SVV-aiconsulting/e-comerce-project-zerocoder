@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 
 from apps.intake.enums import (
+    AssistantMessageRole,
     ClarificationStatus,
     InboundEventStatus,
     OrderDraftStatus,
@@ -72,6 +73,16 @@ class InboundEventResponseService:
                 response_id=f"event:{event.public_id}:ignored",
                 type="ignored",
                 message="Отправьте текстом, какие товары и в каком количестве вам нужны.",
+            )
+        stored = event.assistant_messages.filter(
+            role=AssistantMessageRole.ASSISTANT
+        ).first()
+        if stored is not None:
+            return ChannelResponse(
+                response_id=f"assistant-message:{stored.pk}",
+                type=stored.response_type or "assistant",
+                message=stored.content,
+                action_url=stored.action_url,
             )
         if draft is None:
             return None

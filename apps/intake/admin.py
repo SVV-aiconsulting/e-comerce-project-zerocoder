@@ -2,6 +2,9 @@ from django.contrib import admin
 
 from apps.intake.models import (
     AIExtractionRun,
+    AssistantMessage,
+    AssistantToolCall,
+    AssistantTurn,
     Clarification,
     InboundEvent,
     OrderDraft,
@@ -140,3 +143,44 @@ class OutboundMessageAdmin(ReadOnlyAuditAdmin):
     list_filter = ("channel", "status")
     search_fields = ("recipient", "response_id", "provider_message_id")
     readonly_fields = [field.name for field in OutboundMessage._meta.fields]
+
+
+class AssistantToolCallInline(admin.TabularInline):
+    model = AssistantToolCall
+    extra = 0
+    can_delete = False
+    readonly_fields = [field.name for field in AssistantToolCall._meta.fields]
+
+
+@admin.register(AssistantTurn)
+class AssistantTurnAdmin(ReadOnlyAuditAdmin):
+    list_display = (
+        "event",
+        "status",
+        "provider",
+        "model_name",
+        "model_calls",
+        "tool_calls",
+        "latency_ms",
+        "created_at",
+    )
+    list_filter = ("status", "provider", "model_name")
+    search_fields = ("event__public_id", "event__conversation_key", "error_code")
+    readonly_fields = [field.name for field in AssistantTurn._meta.fields]
+    inlines = [AssistantToolCallInline]
+
+
+@admin.register(AssistantMessage)
+class AssistantMessageAdmin(ReadOnlyAuditAdmin):
+    list_display = ("conversation_key", "role", "response_type", "event", "created_at")
+    list_filter = ("role", "response_type")
+    search_fields = ("conversation_key", "event__public_id", "content")
+    readonly_fields = [field.name for field in AssistantMessage._meta.fields]
+
+
+@admin.register(AssistantToolCall)
+class AssistantToolCallAdmin(ReadOnlyAuditAdmin):
+    list_display = ("turn", "call_index", "tool_name", "status", "latency_ms")
+    list_filter = ("tool_name", "status")
+    search_fields = ("turn__event__public_id", "idempotency_key", "error_code")
+    readonly_fields = [field.name for field in AssistantToolCall._meta.fields]

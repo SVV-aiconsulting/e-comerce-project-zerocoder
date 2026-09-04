@@ -94,3 +94,22 @@ class OutboundMessageStatus(models.TextChoices):
     RETRY_SCHEDULED = "retry_scheduled", "Ожидает повтора"
     SENT = "sent", "Отправлено"
     FAILED = "failed", "Ошибка"
+
+
+class AssistantMessageRole(models.TextChoices):
+    USER = "user", "Клиент"
+    ASSISTANT = "assistant", "Ассистент"
+
+
+class AssistantTurnStatus(models.TextChoices):
+    RUNNING = "running", "Выполняется"
+    SUCCEEDED = "succeeded", "Успешно"
+    FAILED = "failed", "Ошибка"
+    TOOL_LIMIT = "tool_limit", "Лимит инструментов"
+
+
+class AssistantToolCallStatus(models.TextChoices):
+    RUNNING = "running", "Выполняется"
+    SUCCEEDED = "succeeded", "Успешно"
+    FAILED = "failed", "Ошибка"
+    REJECTED = "rejected", "Отклонено"

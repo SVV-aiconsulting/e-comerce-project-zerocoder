@@ -387,18 +387,25 @@ class WebsiteAssistantEventView(WebsiteApiView):
 
 class WebsiteAssistantHistoryView(WebsiteApiView):
     def get(self, request):
+        conversation_key = get_or_create_assistant_conversation_key(request)
         events = list(
-            InboundEvent.objects.select_related("draft__converted_order")
+            InboundEvent.objects.select_related("draft__converted_order").prefetch_related("assistant_messages")
             .filter(
                 channel=Channel.WEBSITE,
                 external_user_id=get_or_create_website_user_id(request),
-                conversation_key=get_or_create_assistant_conversation_key(request),
+                conversation_key=conversation_key,
             )
             .order_by("-created_at")[:30]
         )
         messages = []
         for event in reversed(events):
-            messages.append({"role": "user", "message": event.raw_text})
+            stored = {message.role: message for message in event.assistant_messages.all()}
+            user_message = stored.get("user")
+            messages.append({"role": "user", "message": user_message.content if user_message else event.raw_text})
+            assistant_message = stored.get("assistant")
+            if assistant_message:
+                messages.append({"role": "assistant", "message": assistant_message.content, "action_url": assistant_message.action_url})
+                continue
             payload = InboundEventResponseService.present(event)
             response = payload.get("response")
             if payload["complete"] and response:

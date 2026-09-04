@@ -1,12 +1,17 @@
 # Интеграция GigaChat
 
-Проверено: 24.08.2026
+Проверено: 04.09.2026
 
 ## Архитектурная роль
 
-GigaChat выполняет только NLU-задачи: определяет намерение и извлекает факты из сообщения клиента в строгий JSON. Он не получает SQL/ORM-инструменты, не выбирает фактический товар, не рассчитывает цену и не создаёт заказ, доставку или платёж.
+GigaChat ведёт диалог и выбирает один из девяти строго описанных backend-инструментов.
+Он не получает SQL/ORM-доступ: поиск каталога, корзина, заказы, Яндекс Доставка и
+ЮKassa исполняются обычными Django-сервисами, а результат возвращается модели как
+сообщение роли `function`.
 
-Для MVP используется прямой REST-адаптер, без LangChain/Haystack. Это уменьшает число зависимостей и оставляет state machine в обычных Django-сервисах. Локальный runtime сейчас Python 3.14, тогда как официальный Python SDK GigaChat на дату проверки заявляет Python 3.8–3.13; REST API не имеет этого ограничения.
+Для MVP используется прямой REST-адаптер, без LangChain/Haystack. PostgreSQL уже
+хранит состояние диалога и аудит, Celery обеспечивает durable execution, поэтому
+дополнительный agent runtime не нужен и не расходует память VPS.
 
 Базовая модель — `GigaChat-2` (Lite). Если evaluation покажет недостаточное качество извлечения, конфигурация позволяет переключиться на `GigaChat-2-Pro` без изменения доменной логики.
 
@@ -14,6 +19,9 @@ GigaChat выполняет только NLU-задачи: определяет 
 
 ```dotenv
 AI_ORDER_PROCESSING_ENABLED=False
+AI_ASSISTANT_ENABLED=False
+AI_ASSISTANT_MAX_TOOL_CALLS=8
+AI_ASSISTANT_HISTORY_MESSAGES=20
 GIGACHAT_CREDENTIALS=<Authorization Key из личного кабинета>
 GIGACHAT_SCOPE=GIGACHAT_API_PERS
 GIGACHAT_MODEL=GigaChat-2
@@ -33,6 +41,22 @@ Scope:
 
 OAuth access token кэшируется только в памяти worker и обновляется до истечения. Постоянный ключ читается из окружения.
 
+## Tool-calling workflow
+
+Доступны функции `search_products`, `get_cart`, `set_cart_item`,
+`remove_cart_item`, `configure_checkout`, `preview_order`,
+`list_customer_orders`, `repeat_order`, `get_payment_link`, `confirm_order`.
+
+- Аргументы проверяются Pydantic до вызова доменного сервиса.
+- Каждый вызов сохраняется в `AssistantToolCall`; повтор мутации одного события
+  возвращает прежний результат по idempotency key.
+- `confirm_order` проверяет статус и revision preview, а также отдельное явное
+  подтверждение текстом или callback.
+- Финальный текст GigaChat сохраняется в `AssistantMessage` и затем отдаётся
+  каналам без повторной генерации из изменившегося черновика.
+- Невалидный агентный ход не запускает `ORDER_REPAIR` и не вызывает автоматическую
+  передачу менеджеру; клиент получает один сохранённый безопасный ответ.
+
 ## TLS
 
 Проверка TLS обязательна. `verify=False` намеренно запрещён адаптером. Официальный корневой сертификат НУЦ Минцифры можно скачать по инструкции GigaChat:
@@ -47,6 +71,7 @@ OAuth access token кэшируется только в памяти worker и �
 
 - [авторизация и актуальные API URL](https://developers.sber.ru/docs/ru/gigachat/api/reference/rest/gigachat-api);
 - [structured output с JSON Schema и `strict=true`](https://developers.sber.ru/docs/ru/gigachat/guides/structured-output);
+- [генерация аргументов пользовательских функций](https://developers.sber.ru/docs/ru/gigachat/guides/functions/generating-arguments-for-custom-functions);
 - [сертификаты НУЦ Минцифры](https://developers.sber.ru/docs/ru/gigachat/certificates);
 - [модели GigaChat](https://developers.sber.ru/docs/ru/gigachat/models/main).
 

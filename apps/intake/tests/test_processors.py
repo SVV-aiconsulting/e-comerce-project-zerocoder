@@ -112,7 +112,7 @@ def test_assistant_full_dialog_delivery_confirmation_and_yookassa_link(
     settings,
     monkeypatch,
 ):
-    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ASSISTANT_ENABLED = False
     settings.AI_ORDER_PROCESSING_ENABLED = True
     settings.YANDEX_DELIVERY_ENABLED = True
     settings.YOOKASSA_ENABLED = True

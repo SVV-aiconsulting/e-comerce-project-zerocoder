@@ -16,11 +16,18 @@ from apps.customers.models import CustomerIdentityConflict, IdentityConflictStat
 from apps.delivery.models import DeliveryQuote, DeliveryQuoteStatus, Shipment, ShipmentStatus
 from apps.intake.enums import (
     AIRunStatus,
+    AssistantTurnStatus,
     ClarificationStatus,
     InboundEventStatus,
     OrderDraftStatus,
 )
-from apps.intake.models import AIExtractionRun, Clarification, InboundEvent, OrderDraft
+from apps.intake.models import (
+    AIExtractionRun,
+    AssistantTurn,
+    Clarification,
+    InboundEvent,
+    OrderDraft,
+)
 from apps.orders.models import Order
 from apps.payments.models import Payment, PaymentState, Refund, RefundState
 
@@ -207,7 +214,7 @@ def manager_dashboard(request: HttpRequest) -> HttpResponse:
         row["label"] = ShipmentStatus(row["status"]).label
 
     ai_runs = AIExtractionRun.objects.filter(created_at__gte=start_at, created_at__lt=end_at)
-    ai_stats = ai_runs.aggregate(
+    legacy_ai_stats = ai_runs.aggregate(
         total=Count("id"),
         succeeded=Count("id", filter=Q(status=AIRunStatus.SUCCEEDED)),
         failed=Count(
@@ -217,7 +224,35 @@ def manager_dashboard(request: HttpRequest) -> HttpResponse:
             ),
         ),
         avg_latency=Avg("latency_ms"),
+        latency_count=Count("latency_ms"),
     )
+    assistant_turns = AssistantTurn.objects.filter(
+        created_at__gte=start_at,
+        created_at__lt=end_at,
+    )
+    tool_ai_stats = assistant_turns.aggregate(
+        total=Count("id"),
+        succeeded=Count("id", filter=Q(status=AssistantTurnStatus.SUCCEEDED)),
+        failed=Count(
+            "id",
+            filter=Q(status__in=[AssistantTurnStatus.FAILED, AssistantTurnStatus.TOOL_LIMIT]),
+        ),
+        avg_latency=Avg("latency_ms"),
+        latency_count=Count("latency_ms"),
+        tool_calls=Sum("tool_calls"),
+    )
+    latency_count = legacy_ai_stats["latency_count"] + tool_ai_stats["latency_count"]
+    latency_sum = (
+        (legacy_ai_stats["avg_latency"] or 0) * legacy_ai_stats["latency_count"]
+        + (tool_ai_stats["avg_latency"] or 0) * tool_ai_stats["latency_count"]
+    )
+    ai_stats = {
+        "total": legacy_ai_stats["total"] + tool_ai_stats["total"],
+        "succeeded": legacy_ai_stats["succeeded"] + tool_ai_stats["succeeded"],
+        "failed": legacy_ai_stats["failed"] + tool_ai_stats["failed"],
+        "avg_latency": latency_sum / latency_count if latency_count else 0,
+        "tool_calls": tool_ai_stats["tool_calls"] or 0,
+    }
     draft_count = OrderDraft.objects.filter(created_at__gte=start_at, created_at__lt=end_at).count()
     automated_orders = orders.filter(source_draft__isnull=False).count()
     attention = _attention_items()
