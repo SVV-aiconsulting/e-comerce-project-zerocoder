@@ -102,7 +102,7 @@ TOOL_SPECS = (
     ToolSpec("list_customer_orders", "Показать последние заказы идентифицированного клиента.", ListOrdersArgs),
     ToolSpec("repeat_order", "Скопировать позиции прошлого заказа в новый черновик по текущим товарам.", RepeatOrderArgs, True),
     ToolSpec("get_payment_link", "Получить или идемпотентно восстановить ссылку ЮKassa для своего заказа.", PaymentLinkArgs, True),
-    ToolSpec("confirm_order", "После явного подтверждения создать один заказ и при онлайн-оплате получить ссылку ЮKassa.", ConfirmOrderArgs, True),
+    ToolSpec("confirm_order", "После явного подтверждения в текущем сообщении клиента создать один заказ и при онлайн-оплате получить ссылку ЮKassa.", ConfirmOrderArgs, True),
 )
 TOOL_BY_NAME = {spec.name: spec for spec in TOOL_SPECS}
 
@@ -410,7 +410,13 @@ class AssistantToolExecutor:
         if event.kind == "callback" and bool(event.raw_payload.get("confirmed")):
             return True
         text = normalize_product_text(event.raw_text)
-        return bool(re.fullmatch(r"(?:да\s+)?(?:подтверждаю|оформляйте)(?:\s+заказ)?|да", text))
+        return bool(
+            re.fullmatch(
+                r"(?:да(?:\s+подтверждаю(?:\s+(?:этот\s+)?заказ)?)?"
+                r"|(?:подтверждаю|оформляйте)(?:\s+(?:этот\s+)?заказ)?)",
+                text,
+            )
+        )
 
     def _tool_confirm_order(self, args: ConfirmOrderArgs) -> dict:
         draft = self._draft()
