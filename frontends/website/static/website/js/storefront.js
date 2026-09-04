@@ -27,12 +27,17 @@
     return Math.round(amount * 1000) / 1000;
   };
 
+  const QUANTITY_CONTROL_STEP = 1;
+
   const quantityAfterStep = (current, min, direction) => {
-    // Work in thousandths, the same precision as Product.min_quantity in CRM,
-    // so 0.5 + 0.5 never becomes an accidental 0.999999999 in the request.
+    // Work in thousandths, the same precision as Product.min_quantity in CRM.
+    // The CRM minimum is used only for the first addition. Subsequent clicks
+    // change the amount by one unit, without allowing it below the minimum.
     const currentMilli = Math.round(Number(current || 0) * 1000);
     const minMilli = Math.max(1, Math.round(Number(min || 0.001) * 1000));
-    return (currentMilli + direction * minMilli) / 1000;
+    const stepMilli = QUANTITY_CONTROL_STEP * 1000;
+    if (direction < 0 && currentMilli <= minMilli) return 0;
+    return Math.max(minMilli, currentMilli + direction * stepMilli) / 1000;
   };
 
   let currentCart = { items: [] };
@@ -298,7 +303,7 @@
         showCartFeedback(
           next <= 0
             ? `${productName} удалён из корзины`
-            : `${productName}: ${formatQuantity(next)} в корзине (${direction > 0 ? "+" : "−"}${formatQuantity(min)})`
+            : `${productName}: ${formatQuantity(next)} в корзине (${direction > 0 ? "+" : "−"}${formatQuantity(QUANTITY_CONTROL_STEP)})`
         );
       } catch (error) {
         window.alert(error.message);
@@ -340,7 +345,7 @@
         showCartFeedback(
           next <= 0
             ? `${productName} удалён из корзины`
-            : `${productName}: ${formatQuantity(next)} в корзине (${direction > 0 ? "+" : "−"}${formatQuantity(min)})`
+            : `${productName}: ${formatQuantity(next)} в корзине (${direction > 0 ? "+" : "−"}${formatQuantity(QUANTITY_CONTROL_STEP)})`
         );
       } catch (error) {
         window.alert(error.message);
