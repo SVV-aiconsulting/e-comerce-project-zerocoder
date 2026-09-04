@@ -66,6 +66,7 @@ def test_preview_response_is_backend_rendered_with_delivery_and_one_confirmation
                     "name": "Лосось",
                     "quantity": "2.000",
                     "unit": "kg",
+                    "unit_label": "килограмм",
                     "unit_price": "1800.00",
                     "line_total": "3600.00000",
                 }
@@ -82,10 +83,23 @@ def test_preview_response_is_backend_rendered_with_delivery_and_one_confirmation
         }
     )
 
-    assert "Лосось: 2 kg × 1800.00 ₽ = 3600.00 ₽" in content
+    assert "Лосось: 2 килограмм × 1800.00 ₽ = 3600.00 ₽" in content
     assert "Стоимость доставки: 406.16 ₽" in content
     assert "Ориентировочный срок: 2 дн." in content
     assert content.lower().count("подтверд") == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Добавьте икру", False),
+        ("Икру 2 банки", True),
+        ("Добавьте две банки икры", True),
+        ("Хочу полкило лосося", True),
+    ],
+)
+def test_cart_mutation_requires_quantity_in_customer_message(text, expected):
+    assert AssistantToolExecutor._message_has_quantity(text) is expected
 
 
 def tool(name, arguments):

@@ -216,7 +216,7 @@ class OrderAssistantService:
         lines = ["Проверьте заказ:", "", "Состав:"]
         for item in result.get("items", []):
             lines.append(
-                f"• {item['name']}: {OrderAssistantService._quantity(item['quantity'])} {item['unit']} × "
+                f"• {item['name']}: {OrderAssistantService._quantity(item['quantity'])} {item.get('unit_label', item['unit'])} × "
                 f"{OrderAssistantService._money(item['unit_price'])} ₽ = "
                 f"{OrderAssistantService._money(item['line_total'])} ₽"
             )
@@ -265,7 +265,7 @@ class OrderAssistantService:
             )
             for item in order.get("items", []):
                 lines.append(
-                    f"• {item['name']}: {OrderAssistantService._quantity(item['quantity'])} {item['unit']} × "
+                    f"• {item['name']}: {OrderAssistantService._quantity(item['quantity'])} {item.get('unit_label', item['unit'])} × "
                     f"{OrderAssistantService._money(item['unit_price'])} ₽ = "
                     f"{OrderAssistantService._money(item['total_price'])} ₽"
                 )
