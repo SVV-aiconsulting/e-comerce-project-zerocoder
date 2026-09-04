@@ -1,5 +1,6 @@
 from collections import deque
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -30,6 +31,23 @@ def test_function_schemas_are_compatible_with_gigachat():
     configure = next(item for item in definitions if item["name"] == "configure_checkout")
     assert configure["parameters"]["properties"]["receiving_type"]["type"] == "string"
     assert "receiving_type" not in configure["parameters"].get("required", [])
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["Да", "Подтверждаю", "Да, подтверждаю этот заказ", "Оформляйте заказ"],
+)
+def test_explicit_confirmation_accepts_only_deliberate_phrases(text):
+    event = SimpleNamespace(kind="message", raw_payload={}, raw_text=text)
+
+    assert AssistantToolExecutor._explicit_confirmation(event) is True
+
+
+@pytest.mark.parametrize("text", ["Спасибо", "Покажите итог", "Да, адрес верный"])
+def test_explicit_confirmation_rejects_ordinary_dialogue(text):
+    event = SimpleNamespace(kind="message", raw_payload={}, raw_text=text)
+
+    assert AssistantToolExecutor._explicit_confirmation(event) is False
 
 
 def tool(name, arguments):
@@ -96,9 +114,9 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
             answer("Выбрана онлайн-оплата. Рассчитать итог?"),
             tool("preview_order", {}),
             answer("Итого рассчитано. Подтверждаете оформление заказа?"),
-            tool("confirm_order", {"preview_revision": 4, "confirmation": "confirmed"}),
+            tool("confirm_order", {"preview_revision": 4}),
             answer("Без явного подтверждения заказ не создан. Напишите «подтверждаю»."),
-            tool("confirm_order", {"preview_revision": 4, "confirmation": "confirmed"}),
+            tool("confirm_order", {"preview_revision": 4}),
             answer("Ваш заказ оформлен. Ссылка на оплату подготовлена."),
         ]
     )

@@ -52,4 +52,3 @@ class PaymentLinkArgs(StrictToolArgs):
 
 class ConfirmOrderArgs(StrictToolArgs):
     preview_revision: int = Field(ge=1)
-    confirmation: Literal["confirmed"]
