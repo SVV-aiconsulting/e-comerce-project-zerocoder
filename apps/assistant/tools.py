@@ -53,11 +53,43 @@ class ToolSpec:
     mutating: bool = False
 
     def function_definition(self) -> dict:
+        schema = self.schema.model_json_schema(mode="validation")
         return {
             "name": self.name,
             "description": self.description,
-            "parameters": self.schema.model_json_schema(mode="validation"),
+            "parameters": _provider_compatible_schema(schema),
         }
+
+
+def _provider_compatible_schema(value):
+    """Убирает nullable-обёртки, не поддерживаемые GigaChat functions.
+
+    Необязательный аргумент можно не передавать, поэтому JSON Schema не должна
+    объявлять для него ``null``. Фактические аргументы всё равно проверяет
+    исходная строгая Pydantic-модель перед вызовом backend-инструмента.
+    """
+    if isinstance(value, list):
+        return [_provider_compatible_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    variants = value.get("anyOf")
+    if isinstance(variants, list):
+        non_null = [item for item in variants if item.get("type") != "null"]
+        if len(non_null) == 1 and len(non_null) != len(variants):
+            merged = {
+                key: item
+                for key, item in value.items()
+                if key not in {"anyOf", "default"}
+            }
+            merged.update(non_null[0])
+            return _provider_compatible_schema(merged)
+
+    return {
+        key: _provider_compatible_schema(item)
+        for key, item in value.items()
+        if key != "default"
+    }
 
 
 TOOL_SPECS = (

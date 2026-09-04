@@ -4,6 +4,7 @@ from decimal import Decimal
 import pytest
 
 from apps.assistant.services import OrderAssistantService
+from apps.assistant.tools import AssistantToolExecutor
 from apps.common.enums import Channel
 from apps.delivery.models import (
     DeliveryEnvironment,
@@ -19,6 +20,16 @@ from apps.intake.responses import InboundEventResponseService
 from apps.intake.services import InboundEventService
 from apps.orders.models import Order
 from apps.payments.models import Payment
+
+
+def test_function_schemas_are_compatible_with_gigachat():
+    definitions = AssistantToolExecutor.definitions()
+
+    assert definitions
+    assert "anyOf" not in str(definitions)
+    configure = next(item for item in definitions if item["name"] == "configure_checkout")
+    assert configure["parameters"]["properties"]["receiving_type"]["type"] == "string"
+    assert "receiving_type" not in configure["parameters"].get("required", [])
 
 
 def tool(name, arguments):
