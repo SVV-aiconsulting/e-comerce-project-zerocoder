@@ -215,6 +215,8 @@ def test_ambiguous_cancel_asks_then_clears_current_cart(
         raw_text="Отмените заказ",
     ).event
     InboundEventProcessor.process(first.pk)
+    first.status = InboundEventStatus.PROCESSED
+    first.save(update_fields=["status", "updated_at"])
     first.refresh_from_db()
     choice = InboundEventResponseService.present(first)
 
@@ -231,6 +233,8 @@ def test_ambiguous_cancel_asks_then_clears_current_cart(
         raw_text="Корзину",
     ).event
     InboundEventProcessor.process(second.pk)
+    second.status = InboundEventStatus.PROCESSED
+    second.save(update_fields=["status", "updated_at"])
     second.refresh_from_db()
 
     assert InboundEventResponseService.present(second)["response"]["type"] == "cart_cleared"
@@ -278,6 +282,8 @@ def test_stale_cart_blocks_dialog_until_customer_decides(
         raw_text="Здравствуйте",
     ).event
     InboundEventProcessor.process(current.pk)
+    current.status = InboundEventStatus.PROCESSED
+    current.save(update_fields=["status", "updated_at"])
     current.refresh_from_db()
     response = InboundEventResponseService.present(current)
 
@@ -325,6 +331,8 @@ def test_customer_can_cancel_one_unpaid_placed_order_after_choice(
         raw_text="Отмените заказ",
     ).event
     InboundEventProcessor.process(first.pk)
+    first.status = InboundEventStatus.PROCESSED
+    first.save(update_fields=["status", "updated_at"])
     second = InboundEventService.register(
         channel=Channel.TELEGRAM,
         external_event_id="cancel-placed-2",
@@ -334,6 +342,8 @@ def test_customer_can_cancel_one_unpaid_placed_order_after_choice(
         raw_text=order.public_number,
     ).event
     InboundEventProcessor.process(second.pk)
+    second.status = InboundEventStatus.PROCESSED
+    second.save(update_fields=["status", "updated_at"])
     order.refresh_from_db()
     second.refresh_from_db()
 
