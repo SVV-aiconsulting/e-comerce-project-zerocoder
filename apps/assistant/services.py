@@ -66,6 +66,67 @@ class OrderAssistantService:
 
         try:
             draft.refresh_from_db()
+            cancellation = backend.cancellation_action()
+            if cancellation is not None:
+                tool_name, arguments = cancellation
+                result = backend.execute(tool_name, arguments, 1)
+                tool_calls = 1
+                content, response_type, action_url = cls._render_tool_response(
+                    tool_name, result, ""
+                )
+                cls._save_response(
+                    event,
+                    content,
+                    response_type=response_type,
+                    action_url=action_url,
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
+            stale_cart = backend.stale_cart_action()
+            if stale_cart is not None:
+                stale_action, arguments = stale_cart
+                tool_name = "clear_cart" if stale_action == "clear_cart" else "get_cart"
+                result = backend.execute(tool_name, arguments, 1)
+                tool_calls = 1
+                if stale_action == "prompt_stale_cart":
+                    content = cls._render_stale_cart_prompt(result)
+                    response_type = "stale_cart_choice"
+                    action_url = ""
+                elif stale_action == "keep_stale_cart":
+                    content = (
+                        "Корзина сохранена и остаётся актуальной. Можем продолжить "
+                        "оформление или изменить любые параметры заказа."
+                    )
+                    response_type = "cart_kept"
+                    action_url = ""
+                else:
+                    content, response_type, action_url = cls._render_tool_response(
+                        tool_name, result, ""
+                    )
+                cls._save_response(
+                    event,
+                    content,
+                    response_type=response_type,
+                    action_url=action_url,
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
             if (
                 backend._explicit_confirmation(event)
                 and draft.status == OrderDraftStatus.AWAITING_CONFIRMATION
@@ -191,6 +252,10 @@ class OrderAssistantService:
             return str(error.get("message") or model_content or "Не удалось выполнить действие."), "tool_error", ""
         if tool_name == "preview_order":
             return cls._render_preview(result), "order_preview", ""
+        if tool_name == "search_products":
+            return cls._render_catalog(result), "catalog", ""
+        if tool_name == "get_cart":
+            return cls._render_cart(result), "cart", ""
         if tool_name == "confirm_order":
             url = str(result.get("payment_url") or "")
             lines = [
@@ -208,7 +273,81 @@ class OrderAssistantService:
             return text, "payment_link", url
         if tool_name == "list_customer_orders":
             return cls._render_orders(result), "order_history", ""
+        if tool_name == "get_cancellation_options":
+            return cls._render_cancellation_options(result), "cancellation_choice", ""
+        if tool_name == "clear_cart":
+            return str(result.get("message")), "cart_cleared", ""
+        if tool_name == "cancel_order":
+            return str(result.get("message")), "order_cancelled", ""
         return model_content, "assistant", ""
+
+    @staticmethod
+    def _render_catalog(result) -> str:
+        products = result.get("products", [])
+        query = str(result.get("query") or "").strip()
+        if not products:
+            return f"По запросу «{query}» активных товаров в каталоге не найдено."
+        title = "Полный каталог активных товаров:" if result.get("scope") == "full_catalog" else f"Товары по запросу «{query}»:"
+        lines = [title]
+        for product in products:
+            lines.append(
+                f"• {product['name']} — {OrderAssistantService._money(product['price'])} ₽ "
+                f"за {product['unit_label'].lower()}; минимальный заказ: "
+                f"{OrderAssistantService._quantity(product['min_quantity'])} {product['unit_label'].lower()}"
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_cart(result) -> str:
+        items = result.get("items", [])
+        if not items:
+            return "Текущая корзина пуста."
+        lines = ["Текущий состав заказа:"]
+        for item in items:
+            lines.append(
+                f"• {item['name']}: {OrderAssistantService._quantity(item['quantity'])} "
+                f"{item.get('unit_label', item['unit'])} × "
+                f"{OrderAssistantService._money(item['unit_price'])} ₽ = "
+                f"{OrderAssistantService._money(item['line_total'])} ₽"
+            )
+        if result.get("receiving_type") == "delivery":
+            lines.append(f"Адрес доставки: {result.get('delivery_address') or 'ещё не указан'}")
+        elif result.get("receiving_type") == "pickup":
+            lines.append("Получение: самовывоз")
+        if result.get("payment_method"):
+            lines.append(f"Способ оплаты: {result['payment_method']}")
+        if result.get("total_amount") is not None:
+            lines.append(f"Итого последнего расчёта: {OrderAssistantService._money(result['total_amount'])} ₽")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_cancellation_options(result) -> str:
+        cart = result.get("current_cart", {})
+        orders = result.get("active_orders", [])
+        if not cart.get("has_items") and not orders:
+            return "У вас нет текущей корзины и активных оформленных заказов для отмены."
+        lines = ["Уточните, что именно вы хотите отменить:"]
+        if cart.get("has_items"):
+            lines.append("• текущее оформление — очистить корзину и начать заново;")
+        if orders:
+            lines.append("• оформленный заказ:")
+            for order in orders:
+                lines.append(
+                    f"  — {order['number']}: {order['status_label']}, "
+                    f"оплата — {order['payment_status_label']}, "
+                    f"сумма {OrderAssistantService._money(order['total_amount'])} ₽"
+                )
+        lines.append("Ответьте «корзину» либо укажите номер оформленного заказа.")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_stale_cart_prompt(result) -> str:
+        cart = OrderAssistantService._render_cart(result)
+        return (
+            "С момента последнего диалога прошёл час, а в корзине остались товары.\n\n"
+            f"{cart}\n\n"
+            "Этот состав ещё актуален? Ответьте «продолжить» либо «очистить корзину»."
+        )
 
     @staticmethod
     def _render_preview(result) -> str:

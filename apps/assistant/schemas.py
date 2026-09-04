@@ -10,8 +10,8 @@ class StrictToolArgs(BaseModel):
 
 
 class SearchProductsArgs(StrictToolArgs):
-    query: str = Field(min_length=1, max_length=255)
-    limit: int = Field(default=5, ge=1, le=10)
+    query: str = Field(default="", max_length=255)
+    limit: int = Field(default=30, ge=1, le=50)
 
 
 class EmptyArgs(StrictToolArgs):
@@ -52,3 +52,12 @@ class PaymentLinkArgs(StrictToolArgs):
 
 class ConfirmOrderArgs(StrictToolArgs):
     preview_revision: int = Field(ge=1)
+
+
+class ClearCartArgs(StrictToolArgs):
+    confirmation: Literal["clear_current_cart"]
+
+
+class CancelOrderArgs(StrictToolArgs):
+    order_number: str = Field(min_length=1, max_length=32)
+    confirmation: Literal["cancel_placed_order"]

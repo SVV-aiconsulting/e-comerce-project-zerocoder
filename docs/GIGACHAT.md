@@ -4,7 +4,7 @@
 
 ## Архитектурная роль
 
-GigaChat ведёт диалог и выбирает один из десяти строго описанных backend-инструментов.
+GigaChat ведёт диалог и выбирает один из тринадцати строго описанных backend-инструментов.
 Он не получает SQL/ORM-доступ: поиск каталога, корзина, заказы, Яндекс Доставка и
 ЮKassa исполняются обычными Django-сервисами, а результат возвращается модели как
 сообщение роли `function`.
@@ -22,6 +22,7 @@ AI_ORDER_PROCESSING_ENABLED=False
 AI_ASSISTANT_ENABLED=False
 AI_ASSISTANT_MAX_TOOL_CALLS=8
 AI_ASSISTANT_HISTORY_MESSAGES=20
+AI_ASSISTANT_STALE_CART_SECONDS=3600
 GIGACHAT_CREDENTIALS=<Authorization Key из личного кабинета>
 GIGACHAT_SCOPE=GIGACHAT_API_PERS
 GIGACHAT_MODEL=GigaChat-2
@@ -45,7 +46,8 @@ OAuth access token кэшируется только в памяти worker и �
 
 Доступны функции `search_products`, `get_cart`, `set_cart_item`,
 `remove_cart_item`, `configure_checkout`, `preview_order`,
-`list_customer_orders`, `repeat_order`, `get_payment_link`, `confirm_order`.
+`list_customer_orders`, `repeat_order`, `get_payment_link`, `confirm_order`,
+`get_cancellation_options`, `clear_cart`, `cancel_order`.
 
 - Аргументы проверяются Pydantic до вызова доменного сервиса.
 - Перед отправкой в GigaChat nullable-обёртки `anyOf(..., null)`, создаваемые
@@ -64,6 +66,13 @@ OAuth access token кэшируется только в памяти worker и �
 - Preview, параметры доставки, единственный вопрос подтверждения, создание заказа,
   ссылка оплаты и история заказов рендерятся детерминированно из результата tools.
   Явное подтверждение обрабатывается backend без повторного model call.
+- Пустой `query` у `search_products` возвращает полный активный каталог; фильтр
+  использует названия и синонимы. Ответ каталога всегда содержит цену, единицу и
+  минимальное количество из CRM.
+- Двусмысленная отмена сначала показывает текущую корзину и активные заказы.
+  Очистка корзины и отмена оформленного заказа являются разными audited tools.
+- Наполненная корзина после 3600 секунд без диалога блокирует продолжение, пока
+  клиент явно не подтвердит её актуальность либо не очистит.
 - Невалидный агентный ход не запускает `ORDER_REPAIR` и не вызывает автоматическую
   передачу менеджеру; клиент получает один сохранённый безопасный ответ.
 
