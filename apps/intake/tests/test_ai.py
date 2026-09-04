@@ -324,3 +324,60 @@ def test_gigachat_provider_requires_credentials():
             user_prompt="user",
             json_schema=order_extraction_json_schema(),
         )
+
+
+def test_gigachat_provider_supports_native_function_call(monkeypatch):
+    payloads = []
+
+    class ToolClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def post(self, url, **kwargs):
+            if url.endswith("/oauth"):
+                return FakeResponse(200, {"access_token": "token", "expires_at": (time.time() + 3600) * 1000})
+            payloads.append(kwargs["json"])
+            return FakeResponse(
+                200,
+                {
+                    "choices": [{
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "functions_state_id": "state-1",
+                            "function_call": {
+                                "name": "get_cart",
+                                "arguments": {},
+                            },
+                        },
+                        "finish_reason": "function_call",
+                    }],
+                    "model": "GigaChat-2:fixture",
+                    "usage": {"prompt_tokens": 12, "completion_tokens": 4},
+                },
+            )
+
+    monkeypatch.setattr("apps.intake.ai.providers.gigachat.httpx.Client", ToolClient)
+    provider = GigaChatProvider(
+        credentials="credentials",
+        scope="GIGACHAT_API_PERS",
+        model="GigaChat-2",
+        base_url="https://api.giga.chat/v1",
+        auth_url="https://auth.example.test/oauth",
+    )
+    completion = provider.generate_with_tools(
+        system_prompt="system",
+        messages=[{"role": "user", "content": "Покажи корзину"}],
+        functions=[{"name": "get_cart", "description": "Корзина", "parameters": {"type": "object", "properties": {}}}],
+    )
+
+    assert completion.function_call.name == "get_cart"
+    assert completion.function_call.state_id == "state-1"
+    assert payloads[0]["function_call"] == "auto"
+    assert payloads[0]["functions"][0]["name"] == "get_cart"

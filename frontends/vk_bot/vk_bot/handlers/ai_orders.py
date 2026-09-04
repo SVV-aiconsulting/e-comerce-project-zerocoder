@@ -54,6 +54,9 @@ async def handle_natural_order_message(message, api_holder: dict) -> None:
     response = result.get("response") or {}
     if response.get("message"):
         await send_message(message.ctx_api, message.peer_id, response["message"])
+        action_url = response.get("action_url") or ""
+        if action_url and action_url not in response["message"]:
+            await send_message(message.ctx_api, message.peer_id, action_url)
     else:
         await send_message(
             message.ctx_api,

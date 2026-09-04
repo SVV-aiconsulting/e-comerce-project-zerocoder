@@ -14,6 +14,9 @@ from apps.intake.enums import (
     ACTIVE_DRAFT_STATUSES,
     AIRunPurpose,
     AIRunStatus,
+    AssistantMessageRole,
+    AssistantToolCallStatus,
+    AssistantTurnStatus,
     ClarificationStatus,
     InboundEventKind,
     InboundEventStatus,
@@ -472,3 +475,109 @@ class OutboundMessage(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.channel}:{self.recipient} ({self.get_status_display()})"
+
+
+class AssistantMessage(TimeStampedModel):
+    """Неизменяемое сообщение диалога, показанное клиенту или полученное от него."""
+
+    event = models.ForeignKey(
+        InboundEvent,
+        on_delete=models.PROTECT,
+        related_name="assistant_messages",
+    )
+    conversation_key = models.CharField(max_length=255, db_index=True)
+    role = models.CharField(max_length=16, choices=AssistantMessageRole.choices)
+    content = models.TextField()
+    response_type = models.CharField(max_length=32, blank=True)
+    action_url = models.URLField(max_length=2000, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["event", "role"],
+                name="intake_unique_assistant_message_role",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=["conversation_key", "created_at"],
+                name="intake_assistant_history_idx",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.conversation_key}:{self.role}"
+
+
+class AssistantTurn(TimeStampedModel):
+    """Метрики и итог одного агентного хода."""
+
+    event = models.OneToOneField(
+        InboundEvent,
+        on_delete=models.PROTECT,
+        related_name="assistant_turn",
+    )
+    draft = models.ForeignKey(
+        OrderDraft,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assistant_turns",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=AssistantTurnStatus.choices,
+        default=AssistantTurnStatus.RUNNING,
+    )
+    provider = models.CharField(max_length=64, blank=True)
+    model_name = models.CharField(max_length=128, blank=True)
+    prompt_profile = models.CharField(max_length=64, blank=True)
+    model_calls = models.PositiveSmallIntegerField(default=0)
+    tool_calls = models.PositiveSmallIntegerField(default=0)
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    latency_ms = models.PositiveIntegerField(null=True, blank=True)
+    error_code = models.CharField(max_length=64, blank=True)
+    error_message = models.TextField(blank=True)
+    started_at = models.DateTimeField(default=timezone.now)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["status", "created_at"], name="intake_assistant_turn_idx")
+        ]
+
+
+class AssistantToolCall(TimeStampedModel):
+    """Аудит типизированного backend-вызова без прямого доступа LLM к ORM."""
+
+    turn = models.ForeignKey(
+        AssistantTurn,
+        on_delete=models.CASCADE,
+        related_name="calls",
+    )
+    call_index = models.PositiveSmallIntegerField()
+    tool_name = models.CharField(max_length=64)
+    arguments = models.JSONField(default=dict)
+    result = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=24,
+        choices=AssistantToolCallStatus.choices,
+        default=AssistantToolCallStatus.RUNNING,
+    )
+    idempotency_key = models.CharField(max_length=64, unique=True)
+    error_code = models.CharField(max_length=64, blank=True)
+    latency_ms = models.PositiveIntegerField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["call_index", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["turn", "call_index"],
+                name="intake_unique_tool_call_index",
+            )
+        ]

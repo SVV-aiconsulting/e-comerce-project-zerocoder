@@ -38,7 +38,7 @@
     <div class="dashboard-card"><small>Оплачено</small><strong>{{ paid_count }} ({{ paid_share }}%)</strong></div>
     <div class="dashboard-card"><small>Автоматически создано</small><strong>{{ automated_orders }} ({{ automation_share }}%)</strong></div>
     <div class="dashboard-card"><small>AI-черновики</small><strong>{{ draft_count }}</strong></div>
-    <div class="dashboard-card"><small>AI-вызовы: успех / ошибки</small><strong>{{ ai_stats.succeeded|default:0 }} / {{ ai_stats.failed|default:0 }}</strong><small>средняя задержка: {{ ai_stats.avg_latency|default:0|floatformat:0 }} мс</small></div>
+    <div class="dashboard-card"><small>AI-ходы: успех / ошибки</small><strong>{{ ai_stats.succeeded|default:0 }} / {{ ai_stats.failed|default:0 }}</strong><small>tool calls: {{ ai_stats.tool_calls|default:0 }} · средняя задержка: {{ ai_stats.avg_latency|default:0|floatformat:0 }} мс</small></div>
   </div>
 
   <h2>Заказы по каналам</h2>
