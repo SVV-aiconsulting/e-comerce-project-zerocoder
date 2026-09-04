@@ -402,9 +402,9 @@ textarea {
 
 .product-card__meta {
   display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 14px;
 }
 
 .price {
@@ -412,8 +412,14 @@ textarea {
   font-size: 1.2rem;
 }
 
+.price__main {
+  display: block;
+  white-space: nowrap;
+}
+
 .price small {
   display: block;
+  margin-top: 3px;
   font-weight: 500;
   color: var(--mist);
   font-size: 0.78rem;
