@@ -75,8 +75,8 @@
           ${description}
           <div class="product-card__meta">
             <div class="price">
-              ${escapeHtml(product.base_price)} ₽
-              <small>за ${escapeHtml(product.unit_label)}, от ${escapeHtml(formatQuantity(product.min_quantity))}</small>
+              <span class="price__main">${escapeHtml(product.base_price)} ₽ за ${escapeHtml(product.unit_label)}</span>
+              <small>Минимальный заказ: ${escapeHtml(formatQuantity(product.min_quantity))} ${escapeHtml(product.unit_label)}</small>
             </div>
             <div class="catalog-cart-controls" data-min="${escapeHtml(product.min_quantity)}">
               <button type="button" class="catalog-step" data-qty-step="-" aria-label="Уменьшить количество ${name}" disabled>−</button>

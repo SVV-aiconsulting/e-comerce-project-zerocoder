@@ -69,8 +69,8 @@
           {% if product.description %}<p class="desc">{{ product.description }}</p>{% endif %}
           <div class="product-card__meta">
             <div class="price">
-              {{ product.base_price }} ₽
-              <small>за {{ product.unit_label }}, от {{ product.min_quantity|floatformat:"-3" }}</small>
+              <span class="price__main">{{ product.base_price }} ₽ за {{ product.unit_label }}</span>
+              <small>Минимальный заказ: {{ product.min_quantity|floatformat:"-3" }} {{ product.unit_label }}</small>
             </div>
             <div class="catalog-cart-controls" data-min="{{ product.min_quantity }}">
               <button type="button" class="catalog-step" data-qty-step="-" aria-label="Уменьшить количество {{ product.name }}" disabled>−</button>
