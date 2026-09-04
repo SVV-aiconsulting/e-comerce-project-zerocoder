@@ -5,6 +5,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal
 from difflib import SequenceMatcher
 
@@ -16,6 +17,8 @@ from django.utils import timezone
 from pydantic import ValidationError as PydanticValidationError
 
 from apps.assistant.schemas import (
+    CancelOrderArgs,
+    ClearCartArgs,
     ConfigureCheckoutArgs,
     ConfirmOrderArgs,
     EmptyArgs,
@@ -28,7 +31,7 @@ from apps.assistant.schemas import (
 )
 from apps.catalog.models import Product, normalize_product_text
 from apps.catalog.services import CatalogService
-from apps.common.enums import PaymentMethod, ReceivingType
+from apps.common.enums import OrderStatus, PaymentMethod, PaymentStatus, ReceivingType, StatusChangeSource
 from apps.intake.enums import (
     AssistantToolCallStatus,
     ClarificationStatus,
@@ -38,9 +41,11 @@ from apps.intake.enums import (
     ResolutionSource,
 )
 from apps.intake.fulfillment import DraftOrderConversionService, DraftPricingService
-from apps.intake.models import AssistantToolCall, Clarification, OrderDraft, OrderDraftItem
+from apps.intake.models import AssistantMessage, AssistantToolCall, Clarification, OrderDraft, OrderDraftItem
 from apps.intake.services import OrderDraftService
 from apps.orders.models import Order
+from apps.orders.services import OrderService
+from apps.payments.models import PaymentState
 from apps.payments.services import PaymentService
 from apps.customers.validators import normalize_email, normalize_phone
 from apps.delivery.models import DeliveryQuoteStatus
@@ -94,7 +99,7 @@ def _provider_compatible_schema(value):
 
 
 TOOL_SPECS = (
-    ToolSpec("search_products", "Найти активные товары по названию, категории или синониму.", SearchProductsArgs),
+    ToolSpec("search_products", "Показать весь активный каталог при пустом query или найти товары по названию, виду и синониму.", SearchProductsArgs),
     ToolSpec("get_cart", "Получить актуальный состав AI-корзины и состояние оформления.", EmptyArgs),
     ToolSpec("set_cart_item", "Добавить товар по коду или установить его количество.", SetCartItemArgs, True),
     ToolSpec("remove_cart_item", "Удалить товар из AI-корзины по коду.", RemoveCartItemArgs, True),
@@ -104,6 +109,9 @@ TOOL_SPECS = (
     ToolSpec("repeat_order", "Скопировать позиции прошлого заказа в новый черновик по текущим товарам.", RepeatOrderArgs, True),
     ToolSpec("get_payment_link", "Получить или идемпотентно восстановить ссылку ЮKassa для своего заказа.", PaymentLinkArgs, True),
     ToolSpec("confirm_order", "После явного подтверждения в текущем сообщении клиента создать один заказ и при онлайн-оплате получить ссылку ЮKassa.", ConfirmOrderArgs, True),
+    ToolSpec("get_cancellation_options", "Проверить текущую корзину и активные оформленные заказы перед уточнением отмены.", EmptyArgs),
+    ToolSpec("clear_cart", "После явного выбора очистить текущее неоформленное содержимое корзины.", ClearCartArgs, True),
+    ToolSpec("cancel_order", "Отменить конкретный активный оформленный, но ещё не исполненный заказ клиента.", CancelOrderArgs, True),
 )
 TOOL_BY_NAME = {spec.name: spec for spec in TOOL_SPECS}
 
@@ -216,14 +224,23 @@ class AssistantToolExecutor:
         query = normalize_product_text(args.query)
         ranked = []
         for product in CatalogService.get_active_products().prefetch_related("aliases"):
+            if not query:
+                ranked.append((1, 1.0, product))
+                continue
             variants = [normalize_product_text(product.name)] + [a.normalized_alias for a in product.aliases.all()]
             substring = any(query in value or value in query for value in variants)
             score = max(SequenceMatcher(None, query, value).ratio() for value in variants)
-            if substring or score >= 0.25:
+            if substring or score >= 0.55:
                 ranked.append((1 if substring else 0, score, product))
         ranked.sort(key=lambda row: (-row[0], -row[1], row[2].sort_order, row[2].name))
         products = [self._product_payload(row[2]) for row in ranked[: args.limit]]
-        return {"ok": True, "query": args.query, "products": products, "count": len(products)}
+        return {
+            "ok": True,
+            "query": args.query,
+            "scope": "full_catalog" if not query else "filtered",
+            "products": products,
+            "count": len(products),
+        }
 
     def _cart_payload(self, draft=None) -> dict:
         draft = draft or self._draft()
@@ -344,6 +361,24 @@ class AssistantToolExecutor:
         return self._cart_payload(self._refresh_state(draft))
 
     def _tool_configure_checkout(self, args: ConfigureCheckoutArgs) -> dict:
+        if all(
+            getattr(args, field) is None
+            for field in (
+                "receiving_type",
+                "delivery_address",
+                "payment_method",
+                "contact_phone",
+                "contact_email",
+                "customer_comment",
+            )
+        ):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "checkout_value_required",
+                    "message": "Да, параметры можно изменить. Укажите новое значение.",
+                },
+            }
         draft = self._prepare_change()
         updates = {}
         for field in ("receiving_type", "delivery_address", "payment_method", "customer_comment"):
@@ -412,6 +447,230 @@ class AssistantToolExecutor:
             return {"ok": False, "error": {"code": "customer_required", "message": "Сначала нужен телефон или email клиента"}}
         orders = Order.objects.filter(customer_id=draft.customer_id).prefetch_related("items").order_by("-created_at")[: args.limit]
         return {"ok": True, "orders": [self._order_payload(order) for order in orders]}
+
+    def cancellation_action(self):
+        """Возвращает безопасное детерминированное действие для фраз об отмене."""
+        text = normalize_product_text(self.event.raw_text)
+        previous_type = (
+            AssistantMessage.objects.filter(
+                conversation_key=self.event.conversation_key,
+                event__channel=self.event.channel,
+                event__external_user_id=self.event.external_user_id,
+                role="assistant",
+            )
+            .exclude(event=self.event)
+            .order_by("-created_at", "-id")
+            .values_list("response_type", flat=True)
+            .first()
+        )
+        pending_choice = previous_type == "cancellation_choice"
+        has_cancel_verb = bool(re.search(r"\b(?:отмен\w*|отказ\w*)\b", text)) or bool(
+            re.search(r"\bочист\w*\b", text) and re.search(r"\bкорзин\w*\b", text)
+        )
+        current_scope = bool(
+            re.search(r"\b(?:корзин\w*|черновик\w*|текущ\w*\s+(?:заказ\w*|оформлен\w*))\b", text)
+        )
+        placed_scope = bool(
+            re.search(r"\b(?:оформлен\w*|создан\w*|оплачен\w*)\s+заказ\w*\b", text)
+        )
+        order_number = re.search(r"\b[0-9A-FА-Я]{10}\b", self.event.raw_text.upper())
+
+        if current_scope and (has_cancel_verb or pending_choice):
+            return "clear_cart", {"confirmation": "clear_current_cart"}
+        if order_number and (has_cancel_verb or pending_choice):
+            return "cancel_order", {
+                "order_number": order_number.group(0),
+                "confirmation": "cancel_placed_order",
+            }
+        if placed_scope and pending_choice:
+            options = self._cancellation_options_payload()
+            orders = options["active_orders"]
+            if len(orders) == 1:
+                return "cancel_order", {
+                    "order_number": orders[0]["number"],
+                    "confirmation": "cancel_placed_order",
+                }
+            return "get_cancellation_options", {}
+        if has_cancel_verb or (pending_choice and text in {"корзину", "заказ", "оформленный"}):
+            return "get_cancellation_options", {}
+        return None
+
+    def stale_cart_action(self):
+        """Останавливает новый диалог, если наполненная корзина старше таймаута."""
+        if not self._draft().items.exists():
+            return None
+        latest = (
+            AssistantMessage.objects.filter(
+                conversation_key=self.event.conversation_key,
+                event__channel=self.event.channel,
+                event__external_user_id=self.event.external_user_id,
+                role="assistant",
+            )
+            .exclude(event=self.event)
+            .order_by("-created_at", "-id")
+            .first()
+        )
+        text = normalize_product_text(self.event.raw_text)
+        if latest and latest.response_type == "stale_cart_choice":
+            if re.search(r"\b(?:очист\w*|неактуал\w*|сброс\w*|заново)\b", text):
+                return "clear_cart", {"confirmation": "clear_current_cart"}
+            if re.search(r"\b(?:актуал\w*|продолж\w*|остав\w*|сохран\w*|да)\b", text):
+                return "keep_stale_cart", {}
+            return "prompt_stale_cart", {}
+        if latest is None:
+            return None
+        timeout = timedelta(seconds=settings.AI_ASSISTANT_STALE_CART_SECONDS)
+        if timezone.now() - latest.created_at >= timeout:
+            return "prompt_stale_cart", {}
+        return None
+
+    def _cancellation_options_payload(self) -> dict:
+        draft = self._draft()
+        cart = self._cart_payload(draft)
+        active_orders = []
+        if draft.customer_id:
+            orders = (
+                Order.objects.filter(
+                    customer_id=draft.customer_id,
+                    order_status__in=[
+                        OrderStatus.NEW,
+                        OrderStatus.ASSEMBLED,
+                        OrderStatus.DELIVERING,
+                    ],
+                )
+                .order_by("-created_at")
+            )
+            active_orders = [
+                {
+                    "number": order.public_number,
+                    "status": order.order_status,
+                    "status_label": order.get_order_status_display(),
+                    "payment_status": order.payment_status,
+                    "payment_status_label": order.get_payment_status_display(),
+                    "total_amount": str(order.total_amount),
+                    "automatic_cancellation": (
+                        order.order_status == OrderStatus.NEW
+                        and order.payment_status != PaymentStatus.PAID
+                    ),
+                }
+                for order in orders
+            ]
+        return {
+            "ok": True,
+            "current_cart": {
+                "has_items": bool(cart["items"]),
+                "items": cart["items"],
+                "status": cart["status"],
+            },
+            "active_orders": active_orders,
+        }
+
+    def _tool_get_cancellation_options(self, _args: EmptyArgs) -> dict:
+        return self._cancellation_options_payload()
+
+    def _tool_clear_cart(self, _args: ClearCartArgs) -> dict:
+        action = self.cancellation_action()
+        stale_action = self.stale_cart_action()
+        if not (
+            (action is not None and action[0] == "clear_cart")
+            or (stale_action is not None and stale_action[0] == "clear_cart")
+        ):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "explicit_cart_cancellation_required",
+                    "message": "Сначала явно подтвердите, что нужно очистить текущую корзину.",
+                },
+            }
+        draft = self._prepare_change()
+        deleted, _ = draft.items.all().delete()
+        OrderDraft.objects.filter(pk=draft.pk).update(
+            receiving_type="",
+            delivery_address="",
+            payment_method="",
+            desired_date=None,
+            desired_time_interval="",
+            customer_comment="",
+            missing_fields=["items"],
+            intent=OrderIntent.CREATE_ORDER,
+            status=OrderDraftStatus.COLLECTING,
+        )
+        return {
+            "ok": True,
+            "cleared_items": deleted,
+            "message": "Текущее оформление отменено, корзина очищена.",
+        }
+
+    def _tool_cancel_order(self, args: CancelOrderArgs) -> dict:
+        action = self.cancellation_action()
+        if (
+            action is None
+            or action[0] != "cancel_order"
+            or action[1].get("order_number") != args.order_number
+        ):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "explicit_order_cancellation_required",
+                    "message": "Сначала явно выберите оформленный заказ для отмены.",
+                },
+            }
+        draft = self._draft()
+        if draft.customer_id is None:
+            return {
+                "ok": False,
+                "error": {"code": "customer_required", "message": "Не удалось определить клиента."},
+            }
+        order = Order.objects.filter(
+            customer_id=draft.customer_id,
+            public_number=args.order_number,
+        ).first()
+        if order is None:
+            return {
+                "ok": False,
+                "error": {"code": "order_not_found", "message": "Активный заказ с таким номером не найден."},
+            }
+        if order.order_status in {OrderStatus.COMPLETED, OrderStatus.CANCELLED}:
+            return {
+                "ok": False,
+                "error": {"code": "order_not_active", "message": "Этот заказ уже завершён или отменён."},
+            }
+        if order.payment_status == PaymentStatus.PAID:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "paid_order_requires_manager",
+                    "message": "Заказ уже оплачен. Для отмены и возврата средств потребуется менеджер.",
+                },
+            }
+        if order.order_status != OrderStatus.NEW:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "order_in_fulfillment",
+                    "message": "Заказ уже передан в исполнение. Для отмены потребуется менеджер.",
+                },
+            }
+        payment = (
+            order.payments.filter(state__in=[PaymentState.PENDING, PaymentState.WAITING_FOR_CAPTURE])
+            .order_by("-created_at")
+            .first()
+        )
+        if payment is not None:
+            PaymentService.cancel_payment(payment)
+        source = self.event.channel if self.event.channel in StatusChangeSource.values else StatusChangeSource.AUTOMATIC
+        OrderService.change_status(
+            order,
+            OrderStatus.CANCELLED,
+            source=source,
+            comment="Отменён клиентом через AI-ассистента",
+        )
+        return {
+            "ok": True,
+            "order_number": order.public_number,
+            "order_status": OrderStatus.CANCELLED,
+            "message": f"Заказ {order.public_number} отменён.",
+        }
 
     @staticmethod
     def _order_payload(order) -> dict:

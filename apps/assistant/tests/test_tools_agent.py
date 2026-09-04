@@ -1,12 +1,15 @@
 from collections import deque
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from django.utils import timezone
 
 from apps.assistant.services import OrderAssistantService
 from apps.assistant.tools import AssistantToolExecutor
-from apps.common.enums import Channel
+from apps.carts.services import CartService
+from apps.common.enums import Channel, OrderStatus, PaymentMethod, ReceivingType
 from apps.delivery.models import (
     DeliveryEnvironment,
     DeliveryQuote,
@@ -14,12 +17,19 @@ from apps.delivery.models import (
     DeliveryQuoteStatus,
 )
 from apps.intake.ai.providers.base import FunctionCall, ToolCompletion
-from apps.intake.enums import AssistantMessageRole, AssistantToolCallStatus, InboundEventStatus
-from apps.intake.models import AssistantMessage, AssistantToolCall, AssistantTurn
+from apps.intake.enums import (
+    AssistantMessageRole,
+    AssistantToolCallStatus,
+    InboundEventStatus,
+    ItemMatchStatus,
+    ResolutionSource,
+)
+from apps.intake.models import AssistantMessage, AssistantToolCall, AssistantTurn, OrderDraftItem
 from apps.intake.processors import InboundEventProcessor
 from apps.intake.responses import InboundEventResponseService
-from apps.intake.services import InboundEventService
+from apps.intake.services import InboundEventService, OrderDraftService
 from apps.orders.models import Order
+from apps.orders.services import OrderService
 from apps.payments.models import Payment
 
 
@@ -102,6 +112,27 @@ def test_cart_mutation_requires_quantity_in_customer_message(text, expected):
     assert AssistantToolExecutor._message_has_quantity(text) is expected
 
 
+def test_full_catalog_response_contains_price_unit_and_minimum():
+    content = OrderAssistantService._render_catalog(
+        {
+            "scope": "full_catalog",
+            "query": "",
+            "products": [
+                {
+                    "name": "Лосось",
+                    "price": "1800.00",
+                    "unit_label": "Килограмм",
+                    "min_quantity": "1.000",
+                }
+            ],
+        }
+    )
+
+    assert "Полный каталог" in content
+    assert "1800.00 ₽ за килограмм" in content
+    assert "минимальный заказ: 1 килограмм" in content
+
+
 def tool(name, arguments):
     return ToolCompletion(
         content="",
@@ -140,6 +171,175 @@ def register_event(number, customer, text):
         customer=customer,
         raw_text=text,
     ).event
+
+
+def seed_active_draft_with_product(customer, product, conversation_key):
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+        conversation_key=conversation_key,
+        customer=customer,
+    )
+    OrderDraftItem.objects.create(
+        draft=draft,
+        line_number=1,
+        raw_product_name=product.name,
+        requested_quantity=product.min_quantity,
+        requested_unit=product.unit,
+        product=product,
+        match_status=ItemMatchStatus.MATCHED,
+        candidate_product_ids=[product.pk],
+        resolution_source=ResolutionSource.EXACT,
+        resolution_confidence=Decimal("1"),
+    )
+    return draft
+
+
+@pytest.mark.django_db
+def test_ambiguous_cancel_asks_then_clears_current_cart(
+    customer, product, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ORDER_PROCESSING_ENABLED = True
+    conversation = "cancel-choice-dialog"
+    draft = seed_active_draft_with_product(customer, product, conversation)
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+
+    first = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="cancel-choice-1",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Отмените заказ",
+    ).event
+    InboundEventProcessor.process(first.pk)
+    first.refresh_from_db()
+    choice = InboundEventResponseService.present(first)
+
+    assert choice["response"]["type"] == "cancellation_choice"
+    assert "что именно" in choice["response"]["message"]
+    assert draft.items.count() == 1
+
+    second = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="cancel-choice-2",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Корзину",
+    ).event
+    InboundEventProcessor.process(second.pk)
+    second.refresh_from_db()
+
+    assert InboundEventResponseService.present(second)["response"]["type"] == "cart_cleared"
+    assert draft.items.count() == 0
+    assert provider.calls == []
+
+
+@pytest.mark.django_db
+def test_stale_cart_blocks_dialog_until_customer_decides(
+    customer, product, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ORDER_PROCESSING_ENABLED = True
+    settings.AI_ASSISTANT_STALE_CART_SECONDS = 3600
+    conversation = "stale-cart-dialog"
+    draft = seed_active_draft_with_product(customer, product, conversation)
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+    previous = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="stale-cart-previous",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Хочу товар",
+    ).event
+    previous.draft = draft
+    previous.save(update_fields=["draft", "updated_at"])
+    old_message = AssistantMessage.objects.create(
+        event=previous,
+        conversation_key=conversation,
+        role=AssistantMessageRole.ASSISTANT,
+        content="Продолжим позже",
+    )
+    AssistantMessage.objects.filter(pk=old_message.pk).update(
+        created_at=timezone.now() - timedelta(hours=2)
+    )
+
+    current = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="stale-cart-current",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Здравствуйте",
+    ).event
+    InboundEventProcessor.process(current.pk)
+    current.refresh_from_db()
+    response = InboundEventResponseService.present(current)
+
+    assert response["response"]["type"] == "stale_cart_choice"
+    assert "прошёл час" in response["response"]["message"]
+    assert draft.items.count() == 1
+    assert provider.calls == []
+
+
+@pytest.mark.django_db
+def test_customer_can_cancel_one_unpaid_placed_order_after_choice(
+    customer, product, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ORDER_PROCESSING_ENABLED = True
+    conversation = "cancel-placed-dialog"
+    cart = CartService.get_or_create_active_cart(
+        channel=Channel.TELEGRAM,
+        external_user_id="cancel-order-user",
+        customer=customer,
+    )
+    CartService.set_item_quantity(cart, product, product.min_quantity)
+    order = OrderService.create_order_from_cart(
+        cart,
+        customer=customer,
+        channel=Channel.TELEGRAM,
+        receiving_type=ReceivingType.PICKUP,
+        payment_method=PaymentMethod.CASH_ON_DELIVERY,
+    )
+    OrderDraftService.get_or_create_active(
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+    )
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+
+    first = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="cancel-placed-1",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Отмените заказ",
+    ).event
+    InboundEventProcessor.process(first.pk)
+    second = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="cancel-placed-2",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text=order.public_number,
+    ).event
+    InboundEventProcessor.process(second.pk)
+    order.refresh_from_db()
+    second.refresh_from_db()
+
+    assert order.order_status == OrderStatus.CANCELLED
+    assert InboundEventResponseService.present(second)["response"]["type"] == "order_cancelled"
+    assert provider.calls == []
 
 
 @pytest.mark.django_db
