@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from apps.catalog import selectors
 from apps.catalog.models import Product
-from apps.common.exceptions import ProductUnavailableError, MinQuantityError
+from apps.common.exceptions import MinQuantityError, ProductUnavailableError, QuantityStepError
 
 
 class CatalogService:
@@ -27,3 +27,8 @@ class CatalogService:
             raise ProductUnavailableError(f"Товар «{product.name}» недоступен для заказа")
         if quantity < product.min_quantity:
             raise MinQuantityError(product.name, product.min_quantity)
+        # min_quantity is both the first allowed quantity and the packaging step.
+        # Decimal fields use three fractional digits, therefore modulo comparison is
+        # exact and does not inherit floating-point rounding errors from a frontend.
+        if quantity % product.min_quantity != Decimal("0"):
+            raise QuantityStepError(product.name, product.min_quantity)
