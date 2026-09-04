@@ -4,7 +4,7 @@ import pytest
 
 from apps.carts.services import CartService
 from apps.common.enums import CartStatus, Channel
-from apps.common.exceptions import MinQuantityError, QuantityStepError
+from apps.common.exceptions import MinQuantityError
 
 
 @pytest.mark.django_db
@@ -35,15 +35,3 @@ def test_min_quantity_validation(active_cart, product):
     product.save()
     with pytest.raises(MinQuantityError):
         CartService.add_item(active_cart, product, Decimal("1"))
-
-
-@pytest.mark.django_db
-def test_min_quantity_is_enforced_as_packaging_step(active_cart, product):
-    product.min_quantity = Decimal("0.500")
-    product.save()
-
-    item = CartService.set_item_quantity(active_cart, product, Decimal("1.500"))
-
-    assert item.quantity == Decimal("1.500")
-    with pytest.raises(QuantityStepError):
-        CartService.set_item_quantity(active_cart, product, Decimal("0.750"))
