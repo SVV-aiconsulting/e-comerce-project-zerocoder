@@ -6,6 +6,7 @@ from django.core.management import call_command
 import pytest
 
 from apps.catalog.models import Product
+from apps.carts.models import Cart
 from apps.common.enums import Channel
 from apps.delivery.models import DeliveryEnvironment, DeliveryQuote, DeliveryQuoteStatus
 from apps.delivery.quote_service import YandexDeliveryQuoteService
@@ -263,6 +264,69 @@ def test_website_cart_and_checkout_go_through_backend(client):
     order = Order.objects.get(public_number=created.json()["public_number"])
     assert order.channel == Channel.WEBSITE
     assert order.items.get().product == product
+
+
+@pytest.mark.django_db
+def test_website_checkout_resolves_each_form_contact_without_reusing_cart_customer(client):
+    """One browser can safely create orders for different visitors."""
+    call_command("load_demo_data")
+    product = Product.objects.get(public_code="DEMO-SALMON")
+    client.put(
+        f"/store/cart/items/{product.id}/",
+        data=json.dumps({"quantity": "0.5"}),
+        content_type="application/json",
+    )
+
+    first_preview = client.post(
+        "/store/checkout/preview/",
+        data=json.dumps(
+            {
+                "name": "Первый посетитель",
+                "phone": "+7 999 123-45-67",
+                "email": "first-visitor@example.com",
+                "receiving_type": "pickup",
+                "personal_data_consent": True,
+            }
+        ),
+        content_type="application/json",
+    )
+    active_cart = Cart.objects.get(channel=Channel.WEBSITE, status="active")
+
+    second_preview = client.post(
+        "/store/checkout/preview/",
+        data=json.dumps(
+            {
+                "name": "Второй посетитель",
+                "phone": "+7 999 123-45-68",
+                "email": "second-visitor@example.com",
+                "receiving_type": "pickup",
+                "personal_data_consent": True,
+            }
+        ),
+        content_type="application/json",
+    )
+    created = client.post(
+        "/store/orders/",
+        data=json.dumps(
+            {
+                "name": "Второй посетитель",
+                "phone": "+7 999 123-45-68",
+                "email": "second-visitor@example.com",
+                "receiving_type": "pickup",
+                "payment_method": "cash_on_delivery",
+                "personal_data_consent": True,
+            }
+        ),
+        content_type="application/json",
+    )
+
+    assert first_preview.status_code == 200
+    assert second_preview.status_code == 200
+    assert active_cart.customer_id is None
+    assert created.status_code == 201
+    assert Order.objects.get(public_number=created.json()["public_number"]).customer.email == (
+        "second-visitor@example.com"
+    )
 
 
 @pytest.mark.django_db
