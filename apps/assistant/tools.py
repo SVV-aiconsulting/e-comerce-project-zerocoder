@@ -43,6 +43,7 @@ from apps.intake.services import OrderDraftService
 from apps.orders.models import Order
 from apps.payments.services import PaymentService
 from apps.customers.validators import normalize_email, normalize_phone
+from apps.delivery.models import DeliveryQuoteStatus
 
 
 @dataclass(frozen=True)
@@ -233,6 +234,7 @@ class AssistantToolExecutor:
                 "quantity": str(item.requested_quantity),
                 "unit": item.product.unit,
                 "unit_price": str(item.product.base_price),
+                "line_total": str(item.requested_quantity * item.product.base_price),
             }
             for item in draft.items.select_related("product").filter(product__isnull=False).order_by("line_number")
         ]
@@ -353,8 +355,35 @@ class AssistantToolExecutor:
             "delivery_cost": str(draft.delivery_cost),
             "total_amount": str(draft.total_amount),
         }
+        quote = (
+            draft.delivery_quotes.filter(status=DeliveryQuoteStatus.SUCCEEDED)
+            .order_by("-created_at")
+            .first()
+        )
+        if quote is not None:
+            result["preview"]["delivery_days"] = quote.delivery_days
+            result["preview"]["delivery_currency"] = quote.currency
         result["requires_explicit_confirmation"] = True
         return result
+
+    def context_payload(self) -> dict:
+        """Авторитетное состояние для следующего model turn без доступа LLM к ORM."""
+        recent_search = (
+            AssistantToolCall.objects.filter(
+                turn__event__channel=self.event.channel,
+                turn__event__external_user_id=self.event.external_user_id,
+                turn__event__conversation_key=self.event.conversation_key,
+                tool_name="search_products",
+                status=AssistantToolCallStatus.SUCCEEDED,
+            )
+            .order_by("-created_at", "-id")
+            .values_list("result", flat=True)
+            .first()
+        )
+        return {
+            "cart": self._cart_payload(),
+            "recent_product_search": recent_search or None,
+        }
 
     def _tool_list_customer_orders(self, args: ListOrdersArgs) -> dict:
         draft = self._draft()
@@ -370,8 +399,22 @@ class AssistantToolExecutor:
             "created_at": order.created_at.isoformat(),
             "status": order.order_status,
             "payment_status": order.payment_status,
+            "payment_method": order.payment_method,
+            "receiving_type": order.receiving_type,
+            "delivery_address": order.delivery_address,
+            "delivery_cost": str(order.delivery_cost),
             "total_amount": str(order.total_amount),
-            "items": [{"code": item.product.public_code, "name": item.product_name_snapshot, "quantity": str(item.quantity), "unit": item.product_unit_snapshot} for item in order.items.all()],
+            "items": [
+                {
+                    "code": item.product.public_code,
+                    "name": item.product_name_snapshot,
+                    "quantity": str(item.quantity),
+                    "unit": item.product_unit_snapshot,
+                    "unit_price": str(item.unit_price),
+                    "total_price": str(item.total_price),
+                }
+                for item in order.items.all()
+            ],
         }
 
     @transaction.atomic
@@ -413,7 +456,8 @@ class AssistantToolExecutor:
         return bool(
             re.fullmatch(
                 r"(?:да(?:\s+подтверждаю(?:\s+(?:этот\s+)?заказ)?)?"
-                r"|(?:подтверждаю|оформляйте)(?:\s+(?:этот\s+)?заказ)?)",
+                r"|(?:подтверждаю|оформляйте|оформляем)(?:\s+(?:этот\s+)?заказ)?"
+                r"|готов\s+к\s+оплате|я\s+хочу\s+оплатить(?:\s+(?:этот|свой)\s+заказ)?)",
                 text,
             )
         )

@@ -35,7 +35,15 @@ def test_function_schemas_are_compatible_with_gigachat():
 
 @pytest.mark.parametrize(
     "text",
-    ["Да", "Подтверждаю", "Да, подтверждаю этот заказ", "Оформляйте заказ"],
+    [
+        "Да",
+        "Подтверждаю",
+        "Да, подтверждаю этот заказ",
+        "Оформляйте заказ",
+        "Оформляем",
+        "Готов к оплате",
+        "Я хочу оплатить свой заказ",
+    ],
 )
 def test_explicit_confirmation_accepts_only_deliberate_phrases(text):
     event = SimpleNamespace(kind="message", raw_payload={}, raw_text=text)
@@ -48,6 +56,36 @@ def test_explicit_confirmation_rejects_ordinary_dialogue(text):
     event = SimpleNamespace(kind="message", raw_payload={}, raw_text=text)
 
     assert AssistantToolExecutor._explicit_confirmation(event) is False
+
+
+def test_preview_response_is_backend_rendered_with_delivery_and_one_confirmation():
+    content = OrderAssistantService._render_preview(
+        {
+            "items": [
+                {
+                    "name": "Лосось",
+                    "quantity": "2.000",
+                    "unit": "kg",
+                    "unit_price": "1800.00",
+                    "line_total": "3600.00000",
+                }
+            ],
+            "receiving_type": "delivery",
+            "delivery_address": "Москва, Чистопрудный бульвар, 12",
+            "preview": {
+                "items_total": "3600.00",
+                "discount_amount": "180.00",
+                "delivery_cost": "406.16",
+                "total_amount": "3826.16",
+                "delivery_days": 2,
+            },
+        }
+    )
+
+    assert "Лосось: 2 kg × 1800.00 ₽ = 3600.00 ₽" in content
+    assert "Стоимость доставки: 406.16 ₽" in content
+    assert "Ориентировочный срок: 2 дн." in content
+    assert content.lower().count("подтверд") == 1
 
 
 def tool(name, arguments):
@@ -116,8 +154,6 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
             answer("Итого рассчитано. Подтверждаете оформление заказа?"),
             tool("confirm_order", {"preview_revision": 4}),
             answer("Без явного подтверждения заказ не создан. Напишите «подтверждаю»."),
-            tool("confirm_order", {"preview_revision": 4}),
-            answer("Ваш заказ оформлен. Ссылка на оплату подготовлена."),
         ]
     )
     monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
@@ -176,10 +212,12 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
     assert AssistantMessage.objects.filter(role=AssistantMessageRole.ASSISTANT).count() == len(texts)
 
     refused = InboundEventResponseService.present(events[-2])
-    assert "не создан" in refused["response"]["message"]
+    assert "отдельного явного подтверждения" in refused["response"]["message"]
     final = InboundEventResponseService.present(events[-1])
-    assert final["response"]["message"] == "Ваш заказ оформлен. Ссылка на оплату подготовлена."
+    assert "Ваш заказ оформлен" in final["response"]["message"]
+    assert order.public_number in final["response"]["message"]
     assert final["response"]["action_url"].endswith("/tools-agent")
+    assert events[-1].assistant_turn.model_calls == 0
 
     calls_before = len(provider.calls)
     OrderAssistantService.process(events[-1], events[-1].draft, provider=provider)
@@ -188,5 +226,6 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
     assert Payment.objects.count() == 1
 
     last_prompt_messages = provider.calls[-1]["messages"]
-    assert any(message.get("content") == "Итого рассчитано. Подтверждаете оформление заказа?" for message in last_prompt_messages)
+    assert any("Проверьте заказ:" in message.get("content", "") for message in last_prompt_messages)
+    assert product.public_code in provider.calls[-1]["system_prompt"]
     assert all("parameters" in function for function in provider.calls[0]["functions"])

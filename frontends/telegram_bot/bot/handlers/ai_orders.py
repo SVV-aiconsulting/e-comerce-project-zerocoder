@@ -46,7 +46,6 @@ async def on_natural_order_message(
                 },
             }
         )
-        await message.answer("Принял запрос, проверяю товары и условия заказа…")
         result = await api.wait_for_inbound_event(
             submission["event_id"],
             channel=CHANNEL,

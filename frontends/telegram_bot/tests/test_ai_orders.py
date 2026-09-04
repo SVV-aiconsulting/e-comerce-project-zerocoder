@@ -45,5 +45,6 @@ async def test_natural_order_is_submitted_and_response_is_sent(monkeypatch):
         attempts=3,
         interval=0,
     )
+    assert message.answer.await_count == 1
     assert message.answer.await_args_list[-1].args[0] == "Как будете оплачивать?"
     assert message.answer.await_args_list[-1].kwargs["parse_mode"] is None
