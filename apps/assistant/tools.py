@@ -233,6 +233,7 @@ class AssistantToolExecutor:
                 "name": item.product.name,
                 "quantity": str(item.requested_quantity),
                 "unit": item.product.unit,
+                "unit_label": item.product.get_unit_display().lower(),
                 "unit_price": str(item.product.base_price),
                 "line_total": str(item.requested_quantity * item.product.base_price),
             }
@@ -287,6 +288,14 @@ class AssistantToolExecutor:
         return draft
 
     def _tool_set_cart_item(self, args: SetCartItemArgs) -> dict:
+        if not self._message_has_quantity(self.event.raw_text):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "quantity_required",
+                    "message": "Укажите количество товара, которое нужно добавить в заказ.",
+                },
+            }
         product = Product.objects.filter(public_code=args.product_code, is_active=True).first()
         if product is None:
             raise ValueError("Активный товар с таким кодом не найден")
@@ -314,6 +323,18 @@ class AssistantToolExecutor:
             item.validation_errors = []
             item.save(update_fields=["requested_quantity", "requested_unit", "validation_errors", "updated_at"])
         return self._cart_payload(self._refresh_state(draft))
+
+    @staticmethod
+    def _message_has_quantity(text: str) -> bool:
+        normalized = normalize_product_text(text)
+        if re.search(r"\d+(?:[.,]\d+)?", text):
+            return True
+        number_words = (
+            "один", "одна", "одно", "одну", "два", "две", "три", "четыре",
+            "пять", "шесть", "семь", "восемь", "девять", "десять", "полкило",
+            "полкилограмма", "половина", "половину",
+        )
+        return any(re.search(rf"\b{word}\b", normalized) for word in number_words)
 
     def _tool_remove_cart_item(self, args: RemoveCartItemArgs) -> dict:
         draft = self._prepare_change()
@@ -410,6 +431,7 @@ class AssistantToolExecutor:
                     "name": item.product_name_snapshot,
                     "quantity": str(item.quantity),
                     "unit": item.product_unit_snapshot,
+                    "unit_label": item.product.get_unit_display().lower(),
                     "unit_price": str(item.unit_price),
                     "total_price": str(item.total_price),
                 }
