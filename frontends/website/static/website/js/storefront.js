@@ -27,6 +27,14 @@
     return Math.round(amount * 1000) / 1000;
   };
 
+  const quantityAfterStep = (current, min, direction) => {
+    // Work in thousandths, the same precision as Product.min_quantity in CRM,
+    // so 0.5 + 0.5 never becomes an accidental 0.999999999 in the request.
+    const currentMilli = Math.round(Number(current || 0) * 1000);
+    const minMilli = Math.max(1, Math.round(Number(min || 0.001) * 1000));
+    return (currentMilli + direction * minMilli) / 1000;
+  };
+
   let currentCart = { items: [] };
   let cartFeedbackTimer = null;
 
@@ -279,7 +287,8 @@
         (item) => String(item.product.id) === String(card.dataset.productId)
       );
       const current = existing ? Number(existing.quantity) : 0;
-      const next = catalogStep.dataset.qtyStep === "+" ? current + min : current - min;
+      const direction = catalogStep.dataset.qtyStep === "+" ? 1 : -1;
+      const next = quantityAfterStep(current, min, direction);
       try {
         await setQuantity(
           card.dataset.productId,
@@ -289,7 +298,7 @@
         showCartFeedback(
           next <= 0
             ? `${productName} удалён из корзины`
-            : `${productName}: ${formatQuantity(next)} в корзине`
+            : `${productName}: ${formatQuantity(next)} в корзине (${direction > 0 ? "+" : "−"}${formatQuantity(min)})`
         );
       } catch (error) {
         window.alert(error.message);
@@ -323,9 +332,16 @@
       const line = cartStep.closest(".cart-line");
       const min = Number(line.dataset.min || 1);
       const current = Number(line.dataset.quantity || min);
-      const next = cartStep.dataset.cartStep === "+" ? current + min : current - min;
+      const direction = cartStep.dataset.cartStep === "+" ? 1 : -1;
+      const next = quantityAfterStep(current, min, direction);
       try {
         await setQuantity(line.dataset.productId, next <= 0 ? 0 : asQuantity(next, min));
+        const productName = line.querySelector("strong")?.textContent || "Товар";
+        showCartFeedback(
+          next <= 0
+            ? `${productName} удалён из корзины`
+            : `${productName}: ${formatQuantity(next)} в корзине (${direction > 0 ? "+" : "−"}${formatQuantity(min)})`
+        );
       } catch (error) {
         window.alert(error.message);
       }

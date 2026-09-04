@@ -24,6 +24,18 @@ class MinQuantityError(ShopError):
         )
 
 
+class QuantityStepError(MinQuantityError):
+    """Количество не является кратным минимальной фасовке товара."""
+
+    def __init__(self, product_name: str, min_quantity):
+        self.product_name = product_name
+        self.min_quantity = min_quantity
+        ShopError.__init__(
+            self,
+            f"Количество для «{product_name}» должно быть кратно минимальному заказу: {min_quantity}",
+        )
+
+
 class DeliveryError(ShopError):
     """Ошибка валидации правила доставки."""
 
