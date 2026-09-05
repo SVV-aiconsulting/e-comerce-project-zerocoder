@@ -3,6 +3,7 @@
 from dataclasses import asdict
 from datetime import datetime, time, timezone as dt_timezone
 from decimal import Decimal
+import uuid
 
 from django.conf import settings
 from django.utils import timezone
@@ -19,6 +20,7 @@ from apps.delivery.models import (
     LastMilePolicy,
 )
 from apps.delivery.quote_service import (
+    DeliveryLine,
     DeliveryPackageService,
     request_fingerprint,
     rubles_to_kopecks,
@@ -214,6 +216,54 @@ def build_draft_offer_payload(draft, station_id: str) -> tuple[dict, dict, str]:
     return payload, asdict(package), operator_request_id
 
 
+def build_cart_offer_payload(
+    cart,
+    *,
+    station_id: str,
+    destination_address: str,
+    payment_method: str,
+    customer,
+) -> tuple[dict, dict, str]:
+    """Собрать незабронированный оффер для ручной корзины."""
+    address = " ".join((destination_address or "").split())
+    if not address:
+        raise DeliveryDataIncompleteError("Не указан адрес доставки")
+    if customer is None:
+        raise DeliveryDataIncompleteError(
+            "Для расчёта Яндекс Доставки укажите контактный телефон"
+        )
+    items = list(cart.items.select_related("product").all())
+    package = DeliveryPackageService.build(
+        DeliveryLine(product=item.product, quantity=item.quantity) for item in items
+    )
+    operator_request_id = f"cart-{cart.pk}-{uuid.uuid4().hex}"
+    place_barcode = f"{operator_request_id}-1"
+    payload = {
+        "info": {"operator_request_id": operator_request_id, "comment": ""},
+        "source": {"platform_station": {"platform_id": station_id}},
+        "destination": {
+            "type": "custom_location",
+            "custom_location": {"details": {"full_address": address}},
+        },
+        "items": _offer_items_from_lines(
+            (
+                (item.product, item.quantity, item.product.name, item.product.base_price)
+                for item in items
+            ),
+            place_barcode=place_barcode,
+        ),
+        "places": [{"physical_dims": package.as_yandex_payload(), "barcode": place_barcode}],
+        "billing_info": _billing_info_for_payment_method(payment_method),
+        "recipient_info": _recipient_from_values(
+            customer.name, customer.phone, customer.email
+        ),
+        "last_mile_policy": LastMilePolicy.TIME_INTERVAL,
+        "particular_items_refuse": False,
+        "forbid_unboxing": False,
+    }
+    return payload, asdict(package), operator_request_id
+
+
 def _parse_timestamp(value) -> datetime | None:
     if not value:
         return None
@@ -230,6 +280,89 @@ def _parse_timestamp(value) -> datetime | None:
 
 
 class YandexDeliveryOfferService:
+    @classmethod
+    def _create_preview_offer(
+        cls,
+        *,
+        relation: dict,
+        destination_address: str,
+        payload: dict,
+        package_snapshot: dict,
+        operator_request_id: str,
+        client: YandexDeliveryClient | None = None,
+    ) -> DeliveryQuote:
+        """Создать один ранний незабронированный оффер для preview."""
+        api_client = client or YandexDeliveryClient()
+        config = api_client.config
+        config.validate()
+        fingerprint = request_fingerprint(payload)
+        try:
+            response = api_client.create_offers(payload)
+        except YandexDeliveryAPIError as exc:
+            quote = DeliveryQuote.objects.create(
+                **relation, environment=config.environment, kind=DeliveryQuoteKind.OFFER,
+                status=DeliveryQuoteStatus.FAILED, request_fingerprint=fingerprint,
+                operator_request_id=operator_request_id, destination_address=destination_address,
+                package_snapshot=package_snapshot, request_payload=payload,
+                response_payload=exc.response_payload, error_code=exc.code,
+                error_message=str(exc),
+            )
+            DeliverySyncEvent.objects.create(
+                quote=quote, operation=DeliveryOperation.OFFERS_CREATE, succeeded=False,
+                http_status=exc.status_code, request_payload=payload,
+                response_payload=exc.response_payload, error_code=exc.code,
+                error_message=str(exc),
+            )
+            return quote
+        offers = response.get("offers")
+        if not isinstance(offers, list) or not offers:
+            raise YandexDeliveryAPIError("Яндекс Доставка не вернула доступных офферов", response_payload=response)
+        offer = min(offers, key=lambda value: _parse_timestamp(
+            (value.get("offer_details") or {}).get("delivery_interval", {}).get("min")
+        ) or datetime.max.replace(tzinfo=dt_timezone.utc))
+        external_offer_id = str(offer.get("offer_id", "")).strip()
+        if not external_offer_id:
+            raise YandexDeliveryAPIError("Яндекс Доставка вернула оффер без идентификатора", response_payload=offer)
+        details = offer.get("offer_details") or {}
+        amount, currency = parse_money(str(details.get("pricing_total", "")))
+        delivery_interval = details.get("delivery_interval") or {}
+        pickup_interval = details.get("pickup_interval") or {}
+        delivery_from = _parse_timestamp(delivery_interval.get("min"))
+        delivery_days = max(0, (delivery_from.date() - timezone.localdate()).days) if delivery_from else None
+        quote = DeliveryQuote.objects.create(
+            **relation, environment=config.environment, kind=DeliveryQuoteKind.OFFER,
+            status=DeliveryQuoteStatus.SUCCEEDED, request_fingerprint=fingerprint,
+            operator_request_id=operator_request_id, external_offer_id=external_offer_id,
+            last_mile_policy=str(delivery_interval.get("policy", LastMilePolicy.TIME_INTERVAL)),
+            destination_address=destination_address, package_snapshot=package_snapshot,
+            amount=amount, currency=currency, delivery_days=delivery_days,
+            expires_at=_parse_timestamp(offer.get("expires_at")), delivery_from=delivery_from,
+            delivery_to=_parse_timestamp(delivery_interval.get("max")),
+            pickup_from=_parse_timestamp(pickup_interval.get("min")),
+            pickup_to=_parse_timestamp(pickup_interval.get("max")), request_payload=payload,
+            response_payload=offer,
+        )
+        DeliverySyncEvent.objects.create(
+            quote=quote, operation=DeliveryOperation.OFFERS_CREATE, succeeded=True,
+            http_status=200, request_payload=payload, response_payload=offer,
+        )
+        return quote
+
+    @classmethod
+    def create_for_cart(cls, cart, *, destination_address: str, payment_method: str, customer, client=None) -> DeliveryQuote:
+        api_client = client or YandexDeliveryClient()
+        config = api_client.config
+        config.validate()
+        payload, package_snapshot, operator_request_id = build_cart_offer_payload(
+            cart, station_id=config.station_id, destination_address=destination_address,
+            payment_method=payment_method, customer=customer,
+        )
+        return cls._create_preview_offer(
+            relation={"cart": cart}, destination_address=destination_address,
+            payload=payload, package_snapshot=package_snapshot,
+            operator_request_id=operator_request_id, client=api_client,
+        )
+
     @classmethod
     def create_for_draft(
         cls,

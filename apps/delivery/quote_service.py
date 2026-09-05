@@ -236,6 +236,7 @@ class YandexDeliveryQuoteService:
         destination_address: str,
         items_total: Decimal,
         payment_method: str = PaymentMethod.CARD_PREPAYMENT,
+        customer=None,
         client: YandexDeliveryClient | None = None,
     ) -> DeliveryQuote:
         """Рассчитать доставку активной ручной корзины до создания CRM-заказа."""
@@ -255,7 +256,7 @@ class YandexDeliveryQuoteService:
             }
             else PaymentMethod.CARD_PREPAYMENT
         )
-        return cls._quote(
+        quote = cls._quote(
             cart=cart,
             order=None,
             order_draft=None,
@@ -265,6 +266,28 @@ class YandexDeliveryQuoteService:
             payment_method=quote_payment_method,
             client=client,
         )
+        if (
+            quote.status == DeliveryQuoteStatus.FAILED
+            and quote.environment == DeliveryEnvironment.TEST
+            and customer is not None
+            and (
+                not quote.error_code
+                or quote.error_code == "no_delivery_options"
+                or quote.error_code.isdigit() and int(quote.error_code) >= 500
+            )
+        ):
+            # Local import avoids a module cycle: offer_service uses package and
+            # fingerprint helpers from this module.
+            from apps.delivery.offer_service import YandexDeliveryOfferService
+
+            return YandexDeliveryOfferService.create_for_cart(
+                cart,
+                destination_address=destination_address,
+                payment_method=quote_payment_method,
+                customer=customer,
+                client=client,
+            )
+        return quote
 
     @classmethod
     @transaction.atomic
