@@ -164,7 +164,9 @@ class OrderAssistantService:
             # поэтому нужен один серверный refresh и расчёт без лишнего «да».
             # Это не действует на историю/старые сессии: только новое событие,
             # уже связанное с CRM-клиентом, может завершить checkout-preview.
-            if event.channel == "website" and event.customer_id:
+            if event.channel == "website" and (
+                event.customer_id or event.raw_payload.get("contact_email")
+            ):
                 refreshed = backend._refresh_state(backend._draft())
                 if (
                     refreshed.status == OrderDraftStatus.READY_FOR_PREVIEW

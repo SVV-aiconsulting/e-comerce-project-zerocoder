@@ -14,7 +14,11 @@ from apps.customers.services import CustomerService
 from apps.intake.enums import InboundEventStatus, OrderDraftStatus
 from apps.intake.models import Clarification, InboundEvent, OrderDraft
 from apps.intake.services import InboundEventService
-from apps.intake.storefront import SESSION_CUSTOMER_KEY, contact_name_from_message
+from apps.intake.storefront import (
+    SESSION_CUSTOMER_KEY,
+    contact_name_from_message,
+    contacts_from_message,
+)
 from apps.orders.models import Order
 
 
@@ -87,6 +91,9 @@ def test_website_assistant_never_uses_manual_checkout_customer_from_session(
 def test_website_assistant_accepts_short_name_with_phone_after_prompt():
     assert contact_name_from_message("Алексей, 89114564343") == "Алексей"
     assert contact_name_from_message("Меня зовут Анна, +7 999 123-45-67") == "Анна"
+    assert contact_name_from_message("Алексей, 9113454545") == "Алексей"
+    assert contact_name_from_message("Я Алексей Петров, мой номер 9113454545") == "Алексей Петров"
+    assert contacts_from_message("Алексей, 9113454545")[0] == "79113454545"
 
 
 @pytest.mark.django_db

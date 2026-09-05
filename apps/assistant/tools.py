@@ -271,7 +271,14 @@ class AssistantToolExecutor:
         text_words = normalize_product_text(text).split()
         variant_words = normalize_product_text(variant).split()
         return bool(variant_words) and all(
-            any(cls._word_matches(expected, actual) for actual in text_words)
+            any(
+                cls._word_matches(expected, actual)
+                or (
+                    min(len(expected), len(actual)) >= 5
+                    and SequenceMatcher(None, expected, actual).ratio() >= 0.75
+                )
+                for actual in text_words
+            )
             for expected in variant_words
         )
 
@@ -380,6 +387,13 @@ class AssistantToolExecutor:
                     "delivery_address": normalize_delivery_address(self.event.raw_text),
                 }
             )
+
+        email_match = re.search(
+            r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.+-])",
+            self.event.raw_text,
+        )
+        if email_match and draft.payment_method == PaymentMethod.CARD_PREPAYMENT:
+            arguments["contact_email"] = email_match.group(0)
 
         if not arguments:
             return None
@@ -511,6 +525,8 @@ class AssistantToolExecutor:
             missing.append("contact_phone")
         if not draft.payment_method:
             missing.append("payment_method")
+        if draft.payment_method == PaymentMethod.CARD_PREPAYMENT and not draft.contact_email:
+            missing.append("contact_email")
         if settings.YANDEX_DELIVERY_ENABLED and draft.receiving_type == ReceivingType.DELIVERY and draft.payment_method == PaymentMethod.CASH_ON_DELIVERY:
             missing.append("delivery_payment_method")
         if draft.customer_id is None:
@@ -635,8 +651,8 @@ class AssistantToolExecutor:
         draft = self._refresh_state(self._draft())
         if draft.missing_fields:
             # После имени, телефона и адреса можно рассчитать доставку до
-            # выбора оплаты. Способ "already_paid" нужен Яндексу только для
-            # тарифа и не сохраняется как выбор пользователя.
+            # выбора оплаты. Временный способ «картой при получении» нужен
+            # Яндексу только для тарифа и не сохраняется как выбор пользователя.
             if (
                 draft.receiving_type == ReceivingType.DELIVERY
                 and set(draft.missing_fields) == {"payment_method"}
@@ -717,7 +733,7 @@ class AssistantToolExecutor:
 
     def _preliminary_delivery_preview(self, draft) -> dict:
         OrderDraft.objects.filter(pk=draft.pk).update(
-            payment_method=PaymentMethod.CARD_PREPAYMENT
+            payment_method=PaymentMethod.CARD_ON_DELIVERY
         )
         try:
             previewed = DraftPricingService.preview(draft)
@@ -772,13 +788,14 @@ class AssistantToolExecutor:
         if "customer" in missing:
             return (
                 "Для расчёта доставки укажите имя и контактный телефон "
-                "получателя в одном сообщении, например: «Меня зовут Анна, "
-                "+79991234567»."
+                "получателя в одном сообщении."
             )
         if "contact_phone" in missing:
             return "Укажите контактный телефон для доставки."
         if "payment_method" in missing:
             return "Выберите способ оплаты: наличными при получении или картой онлайн."
+        if "contact_email" in missing:
+            return "Для онлайн-оплаты укажите email для электронного чека ЮKassa."
         if "delivery_quote" in missing:
             return (
                 "Не удалось рассчитать доставку. Измените адрес, выберите "

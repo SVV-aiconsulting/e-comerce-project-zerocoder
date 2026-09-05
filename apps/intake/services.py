@@ -180,6 +180,8 @@ class OrderDraftService:
             and draft.payment_method == "cash_on_delivery"
         ):
             errors.append("Яндекс Доставка не принимает наличные при получении")
+        if draft.payment_method == "card_prepayment" and not draft.contact_email:
+            errors.append("Не указан email для электронного чека ЮKassa")
         if draft.clarifications.filter(status=ClarificationStatus.PENDING).exists():
             errors.append("Есть неотвеченные уточнения")
 
