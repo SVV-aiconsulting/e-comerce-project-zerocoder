@@ -788,8 +788,7 @@ class AssistantToolExecutor:
         if "customer" in missing:
             return (
                 "Для оформления заказа прошу сообщить Ваше имя и контактный "
-                "телефон. Телефон можно указать в формате +7XXXXXXXXXX, "
-                "8XXXXXXXXXX или 9XXXXXXXXX."
+                "телефон в формате 9XXXXXXXXX."
             )
         if "contact_phone" in missing:
             return "Укажите контактный телефон для доставки."
