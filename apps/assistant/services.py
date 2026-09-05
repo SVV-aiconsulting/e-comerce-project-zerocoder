@@ -337,7 +337,15 @@ class OrderAssistantService:
             return model_content, "assistant", ""
         if result.get("ok") is False:
             error = result.get("error", {})
-            return str(error.get("message") or model_content or "Не удалось выполнить действие."), "tool_error", ""
+            message = str(
+                error.get("message")
+                or model_content
+                or "Не удалось выполнить действие."
+            )
+            cart = result.get("cart")
+            if isinstance(cart, dict) and cart.get("items"):
+                message = f"{cls._render_cart(cart)}\n\n{message}"
+            return message, "tool_error", ""
         if tool_name == "preview_order":
             return cls._render_preview(result), "order_preview", ""
         if tool_name == "search_products":

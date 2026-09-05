@@ -7,6 +7,7 @@ import pytest
 from django.utils import timezone
 
 from apps.assistant.services import OrderAssistantService
+from apps.assistant.schemas import SearchProductsArgs
 from apps.assistant.tools import AssistantToolExecutor
 from apps.carts.services import CartService
 from apps.catalog.models import Product
@@ -138,6 +139,26 @@ def test_full_catalog_response_contains_price_unit_and_minimum():
     assert "Полный каталог" in content
     assert "1800.00 ₽ за килограмм" in content
     assert "минимальный заказ: 1 килограмм" in content
+
+
+@pytest.mark.django_db
+def test_product_search_does_not_mix_fuzzy_match_into_literal_match(product):
+    product.name = "Икра лососёвая"
+    product.public_code = "TEST-CAVIAR"
+    product.save(update_fields=["name", "public_code", "updated_at"])
+    Product.objects.create(
+        public_code="TEST-CRAB",
+        name="Краб камчатский",
+        unit=ProductUnit.PACKAGE,
+        min_quantity=Decimal("1"),
+        base_price=Decimal("4500.00"),
+        is_active=True,
+    )
+    backend = object.__new__(AssistantToolExecutor)
+
+    result = backend._tool_search_products(SearchProductsArgs(query="икра", limit=30))
+
+    assert [item["name"] for item in result["products"]] == ["Икра лососёвая"]
 
 
 def test_cart_update_response_uses_full_backend_cart_not_model_claim():
@@ -400,6 +421,14 @@ def test_preview_surfaces_yandex_no_delivery_options(
     assert result["error"]["code"] == "no_delivery_options"
     assert "Измените адрес" in result["error"]["message"]
     assert result["error"]["provider_message"] == "No delivery options for interval"
+    assert result["cart"]["items"][0]["name"] == product.name
+
+    content, response_type, _ = OrderAssistantService._render_tool_response(
+        "preview_order", result, ""
+    )
+    assert response_type == "tool_error"
+    assert product.name in content
+    assert "Яндекс Доставка не предложила вариант" in content
 
 
 @pytest.mark.django_db
