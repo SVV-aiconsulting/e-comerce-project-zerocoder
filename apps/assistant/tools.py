@@ -222,16 +222,24 @@ class AssistantToolExecutor:
 
     def _tool_search_products(self, args: SearchProductsArgs) -> dict:
         query = normalize_product_text(args.query)
-        ranked = []
+        literal_matches = []
+        fuzzy_matches = []
         for product in CatalogService.get_active_products().prefetch_related("aliases"):
             if not query:
-                ranked.append((1, 1.0, product))
+                literal_matches.append((1, 1.0, product))
                 continue
             variants = [normalize_product_text(product.name)] + [a.normalized_alias for a in product.aliases.all()]
             substring = any(query in value or value in query for value in variants)
             score = max(SequenceMatcher(None, query, value).ratio() for value in variants)
-            if substring or score >= 0.55:
-                ranked.append((1 if substring else 0, score, product))
+            if substring:
+                literal_matches.append((1, score, product))
+            elif score >= 0.55:
+                fuzzy_matches.append((0, score, product))
+
+        # Нечёткий поиск нужен только как fallback для опечаток. Если каталог уже
+        # дал буквальное совпадение по названию или управляемому синониму, нельзя
+        # примешивать похожие слова (например, «краб» к запросу «икра»).
+        ranked = literal_matches or fuzzy_matches
         ranked.sort(key=lambda row: (-row[0], -row[1], row[2].sort_order, row[2].name))
         products = [self._product_payload(row[2]) for row in ranked[: args.limit]]
         return {
@@ -533,7 +541,13 @@ class AssistantToolExecutor:
                         "provider_message": failed_quote.error_message,
                     }
                 )
-            return {"ok": False, "error": error}
+            return {
+                "ok": False,
+                "error": error,
+                # Даже при недоступности внешнего тарифа клиент должен видеть,
+                # что товары и параметры сохранены в текущем черновике.
+                "cart": self._cart_payload(draft),
+            }
         result = self._cart_payload(draft)
         result["preview"] = {
             "revision": draft.previewed_revision,
