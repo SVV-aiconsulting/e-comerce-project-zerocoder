@@ -127,6 +127,84 @@ class OrderAssistantService:
                     output_tokens,
                 )
                 return OrderDraft.objects.get(pk=draft.pk)
+            catalog = backend.catalog_action()
+            if catalog is not None:
+                tool_name, arguments = catalog
+                result = backend.execute(tool_name, arguments, 1)
+                tool_calls = 1
+                content, response_type, action_url = cls._render_tool_response(
+                    tool_name, result, ""
+                )
+                cls._save_response(
+                    event,
+                    content,
+                    response_type=response_type,
+                    action_url=action_url,
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
+            repeat_order = backend.repeat_order_action()
+            if repeat_order is not None:
+                tool_name, arguments = repeat_order
+                repeated = backend.execute(tool_name, arguments, 1)
+                tool_calls = 1
+                result = repeated
+                rendered_tool = tool_name
+                if repeated.get("ok") is not False:
+                    result = backend.execute("preview_order", {}, 2)
+                    rendered_tool = "preview_order"
+                    tool_calls = 2
+                content, response_type, action_url = cls._render_tool_response(
+                    rendered_tool, result, ""
+                )
+                cls._save_response(
+                    event,
+                    content,
+                    response_type=response_type,
+                    action_url=action_url,
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
+            preview_request = backend.preview_action()
+            if preview_request is not None:
+                tool_name, arguments = preview_request
+                result = backend.execute(tool_name, arguments, 1)
+                tool_calls = 1
+                content, response_type, action_url = cls._render_tool_response(
+                    tool_name, result, ""
+                )
+                cls._save_response(
+                    event,
+                    content,
+                    response_type=response_type,
+                    action_url=action_url,
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
             if (
                 backend._explicit_confirmation(event)
                 and draft.status == OrderDraftStatus.AWAITING_CONFIRMATION
@@ -170,6 +248,16 @@ class OrderAssistantService:
                 turn.model_name = completion.model_name
 
                 if completion.function_call is None:
+                    if (
+                        last_tool_name == "repeat_order"
+                        and last_tool_result
+                        and last_tool_result.get("ok") is not False
+                    ):
+                        last_tool_name = "preview_order"
+                        last_tool_result = backend.execute(
+                            "preview_order", {}, tool_calls + 1
+                        )
+                        tool_calls += 1
                     content, response_type, action_url = cls._render_tool_response(
                         last_tool_name,
                         last_tool_result,
@@ -256,6 +344,22 @@ class OrderAssistantService:
             return cls._render_catalog(result), "catalog", ""
         if tool_name == "get_cart":
             return cls._render_cart(result), "cart", ""
+        if tool_name in {"set_cart_item", "remove_cart_item"}:
+            lines = [cls._render_cart(result), ""]
+            missing = set(result.get("missing_fields") or [])
+            if "items" in missing:
+                lines.append("Какие товары и в каком количестве вы хотите заказать?")
+            elif "receiving_type" in missing:
+                lines.append("Выберите способ получения: доставка или самовывоз.")
+            elif "delivery_address" in missing:
+                lines.append("Укажите адрес доставки.")
+            elif "payment_method" in missing:
+                lines.append("Выберите оплату: наличными при получении или картой онлайн.")
+            elif "contact_phone" in missing:
+                lines.append("Укажите контактный телефон для доставки.")
+            else:
+                lines.append("Все обязательные параметры заполнены. Рассчитать актуальный итог?")
+            return "\n".join(lines), "cart_updated", ""
         if tool_name == "confirm_order":
             url = str(result.get("payment_url") or "")
             lines = [
@@ -287,6 +391,25 @@ class OrderAssistantService:
         query = str(result.get("query") or "").strip()
         if not products:
             return f"По запросу «{query}» активных товаров в каталоге не найдено."
+        if result.get("scope") != "full_catalog" and len(products) == 1:
+            product = products[0]
+            lines = [
+                product["name"],
+                (
+                    f"Цена: {OrderAssistantService._money(product['price'])} ₽ "
+                    f"за {product['unit_label'].lower()}"
+                ),
+                (
+                    "Минимальный заказ: "
+                    f"{OrderAssistantService._quantity(product['min_quantity'])} "
+                    f"{product['unit_label'].lower()}"
+                ),
+                (
+                    "Описание: "
+                    f"{product.get('description') or 'в карточке товара не указано'}"
+                ),
+            ]
+            return "\n".join(lines)
         title = "Полный каталог активных товаров:" if result.get("scope") == "full_catalog" else f"Товары по запросу «{query}»:"
         lines = [title]
         for product in products:

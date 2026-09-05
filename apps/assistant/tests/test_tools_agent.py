@@ -9,7 +9,14 @@ from django.utils import timezone
 from apps.assistant.services import OrderAssistantService
 from apps.assistant.tools import AssistantToolExecutor
 from apps.carts.services import CartService
-from apps.common.enums import Channel, OrderStatus, PaymentMethod, ReceivingType
+from apps.catalog.models import Product
+from apps.common.enums import (
+    Channel,
+    OrderStatus,
+    PaymentMethod,
+    ProductUnit,
+    ReceivingType,
+)
 from apps.delivery.models import (
     DeliveryEnvironment,
     DeliveryQuote,
@@ -133,6 +140,113 @@ def test_full_catalog_response_contains_price_unit_and_minimum():
     assert "минимальный заказ: 1 килограмм" in content
 
 
+def test_cart_update_response_uses_full_backend_cart_not_model_claim():
+    content, response_type, _ = OrderAssistantService._render_tool_response(
+        "set_cart_item",
+        {
+            "ok": True,
+            "items": [
+                {
+                    "name": "Лосось",
+                    "quantity": "2.000",
+                    "unit": "kg",
+                    "unit_label": "килограмм",
+                    "unit_price": "1800.00",
+                    "line_total": "3600.00",
+                },
+                {
+                    "name": "Форель",
+                    "quantity": "3.000",
+                    "unit": "kg",
+                    "unit_label": "килограмм",
+                    "unit_price": "1450.00",
+                    "line_total": "4350.00",
+                },
+            ],
+            "missing_fields": [],
+        },
+        "Добавлена только форель",
+    )
+
+    assert response_type == "cart_updated"
+    assert "Лосось" in content
+    assert "Форель" in content
+    assert "Добавлена только форель" not in content
+
+
+@pytest.mark.django_db
+def test_product_card_question_is_backend_rendered_with_exact_description(
+    customer, product, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ORDER_PROCESSING_ENABLED = True
+    product.description = "Точный состав из карточки CRM."
+    product.save(update_fields=["description", "updated_at"])
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="product-card-description",
+        external_user_id="12345",
+        conversation_key="product-card-dialog",
+        customer=customer,
+        raw_text=f"Что входит в {product.name}?",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    response = InboundEventResponseService.present(event)["response"]
+
+    assert response["type"] == "catalog"
+    assert "Точный состав из карточки CRM." in response["message"]
+    assert provider.calls == []
+
+
+@pytest.mark.django_db
+def test_set_cart_item_rejects_code_of_different_explicit_product(
+    customer, product
+):
+    trout = Product.objects.create(
+        public_code="TEST-TROUT",
+        name="Форель",
+        unit=ProductUnit.KG,
+        min_quantity=Decimal("1"),
+        base_price=Decimal("1450"),
+        is_active=True,
+    )
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="wrong-product-code",
+        external_user_id="12345",
+        conversation_key="wrong-product-dialog",
+        customer=customer,
+        raw_text="Хочу форель 3 кг",
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    result = backend.execute(
+        "set_cart_item",
+        {"product_code": product.public_code, "quantity": 3.0},
+        1,
+    )
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "product_mismatch"
+    assert result["error"]["mentioned_products"] == [
+        {"code": trout.public_code, "name": trout.name}
+    ]
+    assert draft.items.count() == 0
+
+
 def tool(name, arguments):
     return ToolCompletion(
         content="",
@@ -193,6 +307,144 @@ def seed_active_draft_with_product(customer, product, conversation_key):
         resolution_confidence=Decimal("1"),
     )
     return draft
+
+
+@pytest.mark.django_db
+def test_short_yes_previews_complete_draft_without_cart_mutation(
+    customer, product, delivery_rule, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ORDER_PROCESSING_ENABLED = True
+    settings.YANDEX_DELIVERY_ENABLED = False
+    conversation = "ready-preview-dialog"
+    draft = seed_active_draft_with_product(customer, product, conversation)
+    draft.receiving_type = ReceivingType.PICKUP
+    draft.payment_method = PaymentMethod.CASH_ON_DELIVERY
+    draft.save(update_fields=["receiving_type", "payment_method", "updated_at"])
+    AssistantToolExecutor._refresh_state(draft)
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="ready-preview-yes",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="да",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    response = InboundEventResponseService.present(event)["response"]
+
+    assert response["type"] == "order_preview", response
+    assert response["message"].lower().count("подтверд") == 1
+    assert draft.items.get().requested_quantity == product.min_quantity
+    assert provider.calls == []
+
+
+@pytest.mark.django_db
+def test_preview_surfaces_yandex_no_delivery_options(
+    customer, product, delivery_rule, settings, monkeypatch
+):
+    settings.YANDEX_DELIVERY_ENABLED = True
+    conversation = "delivery-preview-error-dialog"
+    draft = seed_active_draft_with_product(customer, product, conversation)
+    draft.receiving_type = ReceivingType.DELIVERY
+    draft.delivery_address = "Москва, Тестовая улица, 1"
+    draft.payment_method = PaymentMethod.CARD_PREPAYMENT
+    draft.contact_phone = customer.phone
+    draft.save(
+        update_fields=[
+            "receiving_type",
+            "delivery_address",
+            "payment_method",
+            "contact_phone",
+            "updated_at",
+        ]
+    )
+    AssistantToolExecutor._refresh_state(draft)
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="delivery-preview-error",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Рассчитайте итог",
+    ).event
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+
+    def failed_quote(current_draft):
+        return DeliveryQuote.objects.create(
+            order_draft=current_draft,
+            environment=DeliveryEnvironment.TEST,
+            kind=DeliveryQuoteKind.PRELIMINARY,
+            status=DeliveryQuoteStatus.FAILED,
+            request_fingerprint="f" * 64,
+            destination_address=current_draft.delivery_address,
+            error_code="no_delivery_options",
+            error_message="No delivery options for interval",
+        )
+
+    monkeypatch.setattr(
+        "apps.intake.fulfillment.YandexDeliveryQuoteService.quote_draft",
+        failed_quote,
+    )
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    result = backend.execute("preview_order", {}, 1)
+
+    assert result["ok"] is False
+    assert result["error"]["code"] == "no_delivery_options"
+    assert "Измените адрес" in result["error"]["message"]
+    assert result["error"]["provider_message"] == "No delivery options for interval"
+
+
+@pytest.mark.django_db
+def test_repeat_previous_order_immediately_returns_actual_preview(
+    customer, product, delivery_rule, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ORDER_PROCESSING_ENABLED = True
+    settings.YANDEX_DELIVERY_ENABLED = False
+    cart = CartService.get_or_create_active_cart(
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+        customer=customer,
+    )
+    CartService.set_item_quantity(cart, product, Decimal("2"))
+    previous = OrderService.create_order_from_cart(
+        cart,
+        customer=customer,
+        channel=Channel.TELEGRAM,
+        receiving_type=ReceivingType.PICKUP,
+        payment_method=PaymentMethod.CASH_ON_DELIVERY,
+    )
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="repeat-and-preview",
+        external_user_id="12345",
+        conversation_key="repeat-and-preview-dialog",
+        customer=customer,
+        raw_text="Можно повторить мой предыдущий заказ?",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    response = InboundEventResponseService.present(event)["response"]
+
+    assert response["type"] == "order_preview", response
+    assert product.name in response["message"]
+    assert "2" in response["message"]
+    assert previous.public_number not in response["message"]
+    assert Order.objects.count() == 1
+    assert provider.calls == []
 
 
 @pytest.mark.django_db
@@ -374,8 +626,6 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
             answer("Адрес записан. Как будете оплачивать?"),
             tool("configure_checkout", {"payment_method": "card_prepayment", "contact_email": "buyer@example.com"}),
             answer("Выбрана онлайн-оплата. Рассчитать итог?"),
-            tool("preview_order", {}),
-            answer("Итого рассчитано. Подтверждаете оформление заказа?"),
             tool("confirm_order", {"preview_revision": 4}),
             answer("Без явного подтверждения заказ не создан. Напишите «подтверждаю»."),
         ]
