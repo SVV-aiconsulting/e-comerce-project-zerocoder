@@ -36,6 +36,7 @@ SESSION_USER_KEY = "website_external_user_id"
 SESSION_CUSTOMER_KEY = "website_customer_id"
 SESSION_ASSISTANT_CONVERSATION_KEY = "website_assistant_conversation_id"
 SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY = "website_assistant_identity_conversation_id"
+SESSION_ASSISTANT_PENDING_IDENTITY_KEY = "website_assistant_pending_identity"
 ASSISTANT_MESSAGE_MAX_LENGTH = 20_000
 PHONE_IN_TEXT_RE = re.compile(
     r"(?<!\d)(?:(?:\+7|7|8)[\s().-]*\d(?:[\s().-]*\d){9}|9(?:[\s().-]*\d){9})(?!\d)"
@@ -162,6 +163,18 @@ def contact_name_from_message(message: str) -> str:
         flags=re.IGNORECASE,
     )
     candidate = re.sub(r"(?:,?\s*(?:мой\s+)?номер\s*)$", "", candidate, flags=re.IGNORECASE)
+    if re.fullmatch(
+        r"[А-ЯЁA-Z][а-яёa-z-]{1,63}(?:\s+[А-ЯЁA-Z][а-яёa-z-]{1,63}){0,2}",
+        candidate,
+        re.IGNORECASE,
+    ):
+        return " ".join(part.title() for part in candidate.split())
+    return ""
+
+
+def short_contact_name(message: str) -> str:
+    """Принять короткое имя только на ожидаемом шаге сбора контакта."""
+    candidate = message.strip(" \t,;:-")
     if re.fullmatch(
         r"[А-ЯЁA-Z][а-яёa-z-]{1,63}(?:\s+[А-ЯЁA-Z][а-яёa-z-]{1,63}){0,2}",
         candidate,
@@ -403,6 +416,27 @@ class WebsiteAssistantMessageView(WebsiteApiView):
             request.session.get(SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY)
             == conversation_key
         )
+        awaiting_identity = bool(
+            draft is not None
+            and draft.customer_id is None
+            and "customer" in (draft.missing_fields or [])
+        )
+        if not name and awaiting_identity:
+            name = short_contact_name(message)
+
+        pending_identity = request.session.get(SESSION_ASSISTANT_PENDING_IDENTITY_KEY)
+        if not isinstance(pending_identity, dict) or pending_identity.get("conversation_key") != conversation_key:
+            pending_identity = {"conversation_key": conversation_key, "name": "", "phone": ""}
+        if not identity_is_explicit_for_conversation:
+            if name:
+                pending_identity["name"] = name
+            if phone:
+                pending_identity["phone"] = phone
+            request.session[SESSION_ASSISTANT_PENDING_IDENTITY_KEY] = pending_identity
+            request.session.modified = True
+            name = pending_identity["name"]
+            phone = pending_identity["phone"]
+
         if identity_is_explicit_for_conversation and not phone and draft is not None:
             phone = draft.contact_phone
         if identity_is_explicit_for_conversation and not email and draft is not None:
@@ -429,6 +463,7 @@ class WebsiteAssistantMessageView(WebsiteApiView):
                 customer.personal_data_consent = True
                 customer.save(update_fields=["personal_data_consent", "updated_at"])
             request.session[SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY] = conversation_key
+            request.session.pop(SESSION_ASSISTANT_PENDING_IDENTITY_KEY, None)
             request.session.modified = True
         elif draft is not None and draft.customer_id and not identity_is_explicit_for_conversation:
             # Черновик, созданный до разделения ручного checkout и AI identity,
@@ -506,5 +541,6 @@ class WebsiteAssistantConversationView(WebsiteApiView):
     def post(self, request):
         request.session[SESSION_ASSISTANT_CONVERSATION_KEY] = str(uuid.uuid4())
         request.session.pop(SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY, None)
+        request.session.pop(SESSION_ASSISTANT_PENDING_IDENTITY_KEY, None)
         request.session.modified = True
         return JsonResponse({"messages": [], "status": "new"}, status=201)

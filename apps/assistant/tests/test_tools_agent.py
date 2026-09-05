@@ -151,6 +151,13 @@ def test_full_catalog_response_contains_price_unit_and_minimum():
     assert "минимальный заказ: 1 килограмм" in content
 
 
+def test_website_identity_request_is_a_separate_natural_language_step():
+    message = AssistantToolExecutor._missing_fields_message(["customer"])
+
+    assert message.startswith("Для оформления заказа прошу сообщить Ваше имя")
+    assert "одном сообщении" not in message
+
+
 @pytest.mark.django_db
 def test_product_search_does_not_mix_fuzzy_match_into_literal_match(product):
     product.name = "Икра лососёвая"

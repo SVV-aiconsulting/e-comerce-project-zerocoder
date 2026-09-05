@@ -97,6 +97,44 @@ def test_website_assistant_accepts_short_name_with_phone_after_prompt():
 
 
 @pytest.mark.django_db
+def test_website_assistant_collects_name_and_phone_in_separate_messages(
+    client, publish_stub, assistant_enabled
+):
+    first = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Хочу оформить доставку"}),
+        content_type="application/json",
+    )
+    initial_event = InboundEvent.objects.get(public_id=first.json()["event_id"])
+    OrderDraft.objects.create(
+        channel=Channel.WEBSITE,
+        external_user_id=initial_event.external_user_id,
+        conversation_key=initial_event.conversation_key,
+        status=OrderDraftStatus.NEEDS_CLARIFICATION,
+        missing_fields=["customer"],
+    )
+
+    name_response = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Алексей", "personal_data_consent": True}),
+        content_type="application/json",
+    )
+    phone_response = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "9113454545", "personal_data_consent": True}),
+        content_type="application/json",
+    )
+
+    assert name_response.status_code == 202
+    assert phone_response.status_code == 202
+    event = InboundEvent.objects.select_related("customer").get(
+        public_id=phone_response.json()["event_id"]
+    )
+    assert event.customer.name == "Алексей"
+    assert event.customer.phone == "79113454545"
+
+
+@pytest.mark.django_db
 def test_website_assistant_event_is_session_bound_and_returns_clarification(
     client, publish_stub, assistant_enabled
 ):
