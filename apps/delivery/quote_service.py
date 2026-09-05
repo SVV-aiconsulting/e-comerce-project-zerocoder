@@ -16,6 +16,7 @@ from apps.delivery.exceptions import (
 )
 from apps.delivery.models import (
     DeliveryOperation,
+    DeliveryEnvironment,
     DeliveryQuote,
     DeliveryQuoteKind,
     DeliveryQuoteStatus,
@@ -291,35 +292,63 @@ class YandexDeliveryQuoteService:
         )
         fingerprint = request_fingerprint(payload)
 
+        recovered_error = None
         try:
             result = api_client.calculate_price(payload)
         except YandexDeliveryAPIError as exc:
-            quote = DeliveryQuote.objects.create(
-                cart=cart,
-                order=order,
-                order_draft=order_draft,
-                environment=config.environment,
-                kind=DeliveryQuoteKind.PRELIMINARY,
-                status=DeliveryQuoteStatus.FAILED,
-                request_fingerprint=fingerprint,
-                destination_address=destination_address,
-                package_snapshot=asdict(package),
-                request_payload=payload,
-                response_payload=exc.response_payload,
-                error_code=exc.code,
-                error_message=str(exc),
-            )
-            DeliverySyncEvent.objects.create(
-                quote=quote,
-                operation=DeliveryOperation.PRICING,
-                succeeded=False,
-                http_status=exc.status_code,
-                request_payload=payload,
-                response_payload=exc.response_payload,
-                error_code=exc.code,
-                error_message=str(exc),
-            )
-            return quote
+            # Общедоступный test-контур периодически отвечает
+            # no_delivery_options на неизменный валидный payload, а следующий
+            # вызов успешно рассчитывает тот же маршрут. Один ограниченный retry
+            # повышает стабильность MVP и никогда не применяется в production.
+            if (
+                config.environment == DeliveryEnvironment.TEST
+                and exc.code == "no_delivery_options"
+            ):
+                recovered_error = exc
+                try:
+                    result = api_client.calculate_price(payload)
+                except YandexDeliveryAPIError as retry_exc:
+                    exc = retry_exc
+                else:
+                    exc = None
+            if exc is not None:
+                quote = DeliveryQuote.objects.create(
+                    cart=cart,
+                    order=order,
+                    order_draft=order_draft,
+                    environment=config.environment,
+                    kind=DeliveryQuoteKind.PRELIMINARY,
+                    status=DeliveryQuoteStatus.FAILED,
+                    request_fingerprint=fingerprint,
+                    destination_address=destination_address,
+                    package_snapshot=asdict(package),
+                    request_payload=payload,
+                    response_payload=exc.response_payload,
+                    error_code=exc.code,
+                    error_message=str(exc),
+                )
+                DeliverySyncEvent.objects.create(
+                    quote=quote,
+                    operation=DeliveryOperation.PRICING,
+                    succeeded=False,
+                    http_status=exc.status_code,
+                    request_payload=payload,
+                    response_payload=exc.response_payload,
+                    error_code=exc.code,
+                    error_message=str(exc),
+                )
+                return quote
+
+        response_payload = result.raw_payload
+        if recovered_error is not None:
+            response_payload = {
+                **response_payload,
+                "_webmarket_retry": {
+                    "attempts": 2,
+                    "recovered_code": recovered_error.code,
+                    "recovered_message": str(recovered_error),
+                },
+            }
 
         quote = DeliveryQuote.objects.create(
             cart=cart,
@@ -335,7 +364,7 @@ class YandexDeliveryQuoteService:
             currency=result.currency,
             delivery_days=result.delivery_days,
             request_payload=payload,
-            response_payload=result.raw_payload,
+            response_payload=response_payload,
         )
         DeliverySyncEvent.objects.create(
             quote=quote,
@@ -343,6 +372,6 @@ class YandexDeliveryQuoteService:
             succeeded=True,
             http_status=200,
             request_payload=payload,
-            response_payload=result.raw_payload,
+            response_payload=response_payload,
         )
         return quote

@@ -127,6 +127,38 @@ class OrderAssistantService:
                     output_tokens,
                 )
                 return OrderDraft.objects.get(pk=draft.pk)
+            checkout = backend.checkout_action()
+            if checkout is not None:
+                tool_name, arguments = checkout
+                result = backend.execute(tool_name, arguments, 1)
+                tool_calls = 1
+                rendered_tool = tool_name
+                if (
+                    result.get("ok") is not False
+                    and not result.get("missing_fields")
+                ):
+                    result = backend.execute("preview_order", {}, 2)
+                    rendered_tool = "preview_order"
+                    tool_calls = 2
+                content, response_type, action_url = cls._render_tool_response(
+                    rendered_tool, result, ""
+                )
+                cls._save_response(
+                    event,
+                    content,
+                    response_type=response_type,
+                    action_url=action_url,
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
             catalog = backend.catalog_action()
             if catalog is not None:
                 tool_name, arguments = catalog
@@ -164,6 +196,34 @@ class OrderAssistantService:
                     tool_calls = 2
                 content, response_type, action_url = cls._render_tool_response(
                     rendered_tool, result, ""
+                )
+                cls._save_response(
+                    event,
+                    content,
+                    response_type=response_type,
+                    action_url=action_url,
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
+            for authoritative_action in (
+                backend.cart_read_action(),
+                backend.order_history_action(),
+            ):
+                if authoritative_action is None:
+                    continue
+                tool_name, arguments = authoritative_action
+                result = backend.execute(tool_name, arguments, 1)
+                tool_calls = 1
+                content, response_type, action_url = cls._render_tool_response(
+                    tool_name, result, ""
                 )
                 cls._save_response(
                     event,
@@ -258,6 +318,14 @@ class OrderAssistantService:
                             "preview_order", {}, tool_calls + 1
                         )
                         tool_calls += 1
+                    if not last_tool_name:
+                        authoritative = backend.authoritative_fallback_action()
+                        if authoritative is not None:
+                            last_tool_name, arguments = authoritative
+                            last_tool_result = backend.execute(
+                                last_tool_name, arguments, tool_calls + 1
+                            )
+                            tool_calls += 1
                     content, response_type, action_url = cls._render_tool_response(
                         last_tool_name,
                         last_tool_result,
@@ -325,6 +393,10 @@ class OrderAssistantService:
         )
         return (
             f"{ASSISTANT_TOOLS_SYSTEM_PROMPT}\n\n"
+            "История сообщений нужна только для контекста намерения и ссылок вроде "
+            "«этот товар». Она не является источником фактов. Любые сведения о "
+            "товарах, ценах, корзине, заказах и оплате бери только из результата "
+            "соответствующего backend-инструмента в текущем ходе.\n"
             "Актуальный backend-контекст ниже. Используй только точные code из "
             "recent_product_search; не создавай code из названия. Если нужного "
             "товара там нет, снова вызови search_products.\n"
@@ -352,22 +424,21 @@ class OrderAssistantService:
             return cls._render_catalog(result), "catalog", ""
         if tool_name == "get_cart":
             return cls._render_cart(result), "cart", ""
-        if tool_name in {"set_cart_item", "remove_cart_item"}:
+        if tool_name in {"set_cart_item", "remove_cart_item", "configure_checkout"}:
             lines = [cls._render_cart(result), ""]
-            missing = set(result.get("missing_fields") or [])
-            if "items" in missing:
-                lines.append("Какие товары и в каком количестве вы хотите заказать?")
-            elif "receiving_type" in missing:
-                lines.append("Выберите способ получения: доставка или самовывоз.")
-            elif "delivery_address" in missing:
-                lines.append("Укажите адрес доставки.")
-            elif "payment_method" in missing:
-                lines.append("Выберите оплату: наличными при получении или картой онлайн.")
-            elif "contact_phone" in missing:
-                lines.append("Укажите контактный телефон для доставки.")
-            else:
-                lines.append("Все обязательные параметры заполнены. Рассчитать актуальный итог?")
-            return "\n".join(lines), "cart_updated", ""
+            lines.append(
+                AssistantToolExecutor._missing_fields_message(
+                    result.get("missing_fields")
+                )
+                if result.get("missing_fields")
+                else "Все обязательные параметры заполнены. Рассчитать актуальный итог?"
+            )
+            response_type = (
+                "checkout_updated"
+                if tool_name == "configure_checkout"
+                else "cart_updated"
+            )
+            return "\n".join(lines), response_type, ""
         if tool_name == "confirm_order":
             url = str(result.get("payment_url") or "")
             lines = [
@@ -589,7 +660,21 @@ class OrderAssistantService:
             )
             .order_by("-created_at", "-id")[: settings.AI_ASSISTANT_HISTORY_MESSAGES]
         )
-        return [{"role": row.role, "content": row.content} for row in reversed(rows)]
+        history = []
+        for row in reversed(rows):
+            content = row.content
+            if row.role == AssistantMessageRole.ASSISTANT:
+                # Предыдущий текст ассистента неизменно хранится в БД для аудита
+                # и показа клиенту, но не возвращается модели как источник фактов.
+                # Актуальные значения приходят только через BACKEND_CONTEXT/tools.
+                response_type = row.response_type or "assistant"
+                content = (
+                    f"[Ранее отправлен ответ типа {response_type}. Не используй "
+                    "его как источник фактов; проверь актуальные данные через "
+                    "backend-инструмент текущего хода.]"
+                )
+            history.append({"role": row.role, "content": content})
+        return history
 
     @staticmethod
     def _save_response(event, content, *, response_type, action_url=""):

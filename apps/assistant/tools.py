@@ -288,6 +288,7 @@ class AssistantToolExecutor:
         text = normalize_product_text(self.event.raw_text)
         if re.search(r"\b(?:заказ\w*|корзин\w*)\b", text):
             return None
+        products = self._mentioned_products(text)
         catalog_question = bool(
             re.search(
                 r"\b(?:каталог\w*|ассортимент\w*|продаж\w*|описан\w*|"
@@ -295,10 +296,20 @@ class AssistantToolExecutor:
                 text,
             )
             or re.search(r"\bчто\s+у\s+вас\s+есть\b", text)
+            or re.search(
+                r"\b(?:какая|какие|какой|что)\b.*\b(?:есть|имеется|прода\w*)\b",
+                text,
+            )
+            or bool(
+                products
+                and (
+                    re.search(r"\b(?:какая|какие|какой)\b", text)
+                    or text.startswith("а ")
+                )
+            )
         )
         if not catalog_question:
             return None
-        products = self._mentioned_products(text)
         if products:
             names = {product.name for product in products}
             if len(names) == 1:
@@ -313,8 +324,65 @@ class AssistantToolExecutor:
                 ]
                 query = max(aliases, key=len) if aliases else ""
         else:
-            query = ""
+            subject = re.search(
+                r"\b(?:есть|имеется|прода\w*)\b\s+(.+)$",
+                text,
+            )
+            if subject:
+                query = subject.group(1).strip()
+            elif text.startswith("а "):
+                query = text[2:].strip()
+            else:
+                query = ""
         return "search_products", {"query": query, "limit": 30}
+
+    def checkout_action(self):
+        """Серверные переходы checkout, которые нельзя оставлять на память LLM."""
+        text = normalize_product_text(self.event.raw_text)
+        draft = self._draft()
+        arguments = {}
+
+        if re.fullmatch(r"(?:доставка|нужна доставка|доставк(?:ой|у))", text):
+            arguments["receiving_type"] = ReceivingType.DELIVERY
+        elif re.fullmatch(
+            r"(?:самовывоз|самовывозом|заберу сам(?:а)?|нужен самовывоз)", text
+        ):
+            arguments["receiving_type"] = ReceivingType.PICKUP
+        elif re.fullmatch(
+            r"(?:карта|картой|карта онлайн|картой онлайн|оплата картой(?: онлайн)?)",
+            text,
+        ):
+            arguments["payment_method"] = PaymentMethod.CARD_PREPAYMENT
+        elif re.fullmatch(
+            r"(?:наличные|наличными|наличные при получении|наличными при получении)",
+            text,
+        ):
+            arguments["payment_method"] = PaymentMethod.CASH_ON_DELIVERY
+        elif (
+            draft.receiving_type == ReceivingType.DELIVERY
+            and {"delivery_address", "delivery_quote"}.intersection(
+                draft.missing_fields or []
+            )
+            and re.search(r"\d", self.event.raw_text)
+            and (
+                "," in self.event.raw_text
+                or re.search(
+                    r"\b(?:улиц\w*|проспект\w*|переулок\w*|бульвар\w*|"
+                    r"шоссе|набережн\w*|дом\w*)\b",
+                    text,
+                )
+            )
+        ):
+            arguments.update(
+                {
+                    "receiving_type": ReceivingType.DELIVERY,
+                    "delivery_address": " ".join(self.event.raw_text.split()),
+                }
+            )
+
+        if not arguments:
+            return None
+        return "configure_checkout", arguments
 
     def preview_action(self):
         """Не отдаёт короткое согласие модели, если черновик уже готов к расчёту."""
@@ -342,6 +410,53 @@ class AssistantToolExecutor:
         return "repeat_order", {
             "order_number": number.group(0) if number else None,
         }
+
+    def cart_read_action(self):
+        """Текущий состав берётся только из черновика backend."""
+        text = normalize_product_text(self.event.raw_text)
+        if re.search(
+            r"\b(?:покаж\w*|како\w*)\b.*\b(?:состав\w*|корзин\w*)\b",
+            text,
+        ) or re.fullmatch(r"(?:что\s+)?(?:сейчас\s+)?в\s+корзине", text):
+            return "get_cart", {}
+        return None
+
+    def order_history_action(self):
+        """История и статусы заказов всегда читаются из CRM, не из чата."""
+        text = normalize_product_text(self.event.raw_text)
+        if re.search(r"\bповтор\w*\b", text):
+            return None
+        asks_history = bool(
+            re.search(r"\b(?:мои|последн\w*|предыдущ\w*|истори\w*)\b.*\bзаказ\w*\b", text)
+            or re.search(r"\bзаказ\w*\b.*\b(?:статус\w*|оплачен\w*)\b", text)
+            or re.search(r"\b(?:статус\w*|оплачен\w*)\b.*\bзаказ\w*\b", text)
+            or re.fullmatch(r"(?:он|заказ)\s+оплачен\??", text)
+        )
+        if not asks_history:
+            return None
+        limit = 1 if re.search(r"\b(?:последн\w*|предыдущ\w*|он)\b", text) else 5
+        return "list_customer_orders", {"limit": limit}
+
+    def authoritative_fallback_action(self):
+        """Запрещает factual-ответ модели без backend tool call."""
+        for resolver in (
+            self.cart_read_action,
+            self.order_history_action,
+            self.catalog_action,
+        ):
+            action = resolver()
+            if action is not None:
+                return action
+
+        text = normalize_product_text(self.event.raw_text)
+        products = self._mentioned_products(text)
+        if products:
+            # Если модель не вызвала инструмент даже для фразы с товаром,
+            # безопасно показываем карточку/выборку CRM вместо ответа по памяти.
+            names = {product.name for product in products}
+            query = next(iter(names)) if len(names) == 1 else ""
+            return "search_products", {"query": query, "limit": 30}
+        return None
 
     def _cart_payload(self, draft=None) -> dict:
         draft = draft or self._draft()
@@ -516,7 +631,15 @@ class AssistantToolExecutor:
     def _tool_preview_order(self, _args: EmptyArgs) -> dict:
         draft = self._refresh_state(self._draft())
         if draft.missing_fields:
-            return {"ok": False, "error": {"code": "draft_incomplete", "message": "Для расчёта не хватает данных", "missing_fields": draft.missing_fields}, "cart": self._cart_payload(draft)}
+            return {
+                "ok": False,
+                "error": {
+                    "code": "draft_incomplete",
+                    "message": self._missing_fields_message(draft.missing_fields),
+                    "missing_fields": draft.missing_fields,
+                },
+                "cart": self._cart_payload(draft),
+            }
         draft = DraftPricingService.preview(draft)
         if draft.status != OrderDraftStatus.AWAITING_CONFIRMATION:
             error = {
@@ -566,6 +689,28 @@ class AssistantToolExecutor:
             result["preview"]["delivery_currency"] = quote.currency
         result["requires_explicit_confirmation"] = True
         return result
+
+    @staticmethod
+    def _missing_fields_message(missing_fields) -> str:
+        missing = set(missing_fields or [])
+        if "items" in missing:
+            return "Укажите товары и их количество."
+        if "receiving_type" in missing:
+            return "Выберите способ получения: доставка или самовывоз."
+        if "delivery_address" in missing:
+            return "Укажите адрес доставки."
+        if "payment_method" in missing:
+            return "Выберите способ оплаты: наличными при получении или картой онлайн."
+        if "contact_phone" in missing:
+            return "Укажите контактный телефон для доставки."
+        if "customer" in missing:
+            return "Сначала необходимо идентифицировать клиента."
+        if "delivery_quote" in missing:
+            return (
+                "Не удалось рассчитать доставку. Измените адрес, выберите "
+                "самовывоз или повторите расчёт позже."
+            )
+        return "Для расчёта не хватает обязательных данных."
 
     def context_payload(self) -> dict:
         """Авторитетное состояние для следующего model turn без доступа LLM к ORM."""
@@ -845,6 +990,20 @@ class AssistantToolExecutor:
 
     @transaction.atomic
     def _tool_repeat_order(self, args: RepeatOrderArgs) -> dict:
+        text = normalize_product_text(self.event.raw_text)
+        if not (
+            re.search(r"\bповтор\w*\b", text)
+            and re.search(r"\bзаказ\w*\b", text)
+        ):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "repeat_intent_required",
+                    "message": (
+                        "Повтор заказа выполняется только по явному запросу клиента."
+                    ),
+                },
+            }
         draft = self._prepare_change()
         if draft.customer_id is None:
             return {"ok": False, "error": {"code": "customer_required", "message": "Для повтора заказа нужно идентифицировать клиента"}}

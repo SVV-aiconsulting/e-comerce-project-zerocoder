@@ -196,6 +196,50 @@ def test_cart_update_response_uses_full_backend_cart_not_model_claim():
 
 
 @pytest.mark.django_db
+def test_model_history_keeps_user_context_but_redacts_assistant_facts(
+    customer, settings
+):
+    settings.AI_ASSISTANT_HISTORY_MESSAGES = 20
+    first = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="history-user-facts",
+        external_user_id="12345",
+        conversation_key="history-trust-boundary",
+        customer=customer,
+        raw_text="Какая есть икра?",
+    ).event
+    AssistantMessage.objects.create(
+        event=first,
+        conversation_key=first.conversation_key,
+        role=AssistantMessageRole.USER,
+        content=first.raw_text,
+    )
+    AssistantMessage.objects.create(
+        event=first,
+        conversation_key=first.conversation_key,
+        role=AssistantMessageRole.ASSISTANT,
+        content="Икра и ошибочно краб, цена 999 ₽",
+        response_type="catalog",
+    )
+    current = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="history-current-facts",
+        external_user_id="12345",
+        conversation_key=first.conversation_key,
+        customer=customer,
+        raw_text="А икра?",
+    ).event
+
+    history = OrderAssistantService._history(current)
+
+    assert any(row["content"] == "Какая есть икра?" for row in history)
+    assistant_history = [row["content"] for row in history if row["role"] == "assistant"]
+    assert assistant_history
+    assert all("ошибочно краб" not in content for content in assistant_history)
+    assert all("backend-инструмент" in content for content in assistant_history)
+
+
+@pytest.mark.django_db
 def test_product_card_question_is_backend_rendered_with_exact_description(
     customer, product, settings, monkeypatch
 ):
@@ -222,6 +266,96 @@ def test_product_card_question_is_backend_rendered_with_exact_description(
 
     assert response["type"] == "catalog"
     assert "Точный состав из карточки CRM." in response["message"]
+    assert provider.calls == []
+
+
+@pytest.mark.django_db
+def test_product_question_never_uses_model_memory(
+    customer, product, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ORDER_PROCESSING_ENABLED = True
+    product.name = "Икра лососёвая"
+    product.public_code = "TEST-CAVIAR-FACTS"
+    product.save(update_fields=["name", "public_code", "updated_at"])
+    Product.objects.create(
+        public_code="TEST-CRAB-FACTS",
+        name="Краб камчатский",
+        unit=ProductUnit.PACKAGE,
+        min_quantity=Decimal("1"),
+        base_price=Decimal("4500.00"),
+        is_active=True,
+    )
+    provider = ScriptedProvider([answer("По памяти: икра и краб")])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="catalog-facts-only-from-backend",
+        external_user_id="12345",
+        conversation_key="catalog-facts-dialog",
+        customer=customer,
+        raw_text="Какая есть икра?",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    response = InboundEventResponseService.present(event)["response"]
+
+    assert response["type"] == "catalog"
+    assert "Икра лососёвая" in response["message"]
+    assert "Краб камчатский" not in response["message"]
+    assert provider.calls == []
+
+
+@pytest.mark.django_db
+def test_delivery_and_address_steps_are_backend_routed(
+    customer, product, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_ORDER_PROCESSING_ENABLED = True
+    settings.YANDEX_DELIVERY_ENABLED = True
+    conversation = "backend-checkout-routing-dialog"
+    draft = seed_active_draft_with_product(customer, product, conversation)
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+
+    delivery_event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="backend-checkout-delivery",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Доставка",
+    ).event
+    InboundEventProcessor.process(delivery_event.pk)
+    delivery_event.status = InboundEventStatus.PROCESSED
+    delivery_event.save(update_fields=["status", "updated_at"])
+    delivery_event.refresh_from_db()
+    delivery_response = InboundEventResponseService.present(delivery_event)["response"]
+
+    address_event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="backend-checkout-address",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Москва, 1-я Дубровская улица, 5",
+    ).event
+    InboundEventProcessor.process(address_event.pk)
+    address_event.status = InboundEventStatus.PROCESSED
+    address_event.save(update_fields=["status", "updated_at"])
+    address_event.refresh_from_db()
+    address_response = InboundEventResponseService.present(address_event)["response"]
+    draft.refresh_from_db()
+
+    assert delivery_response["type"] == "checkout_updated"
+    assert "Укажите адрес доставки" in delivery_response["message"]
+    assert address_response["type"] == "checkout_updated"
+    assert "Выберите способ оплаты" in address_response["message"]
+    assert draft.delivery_address == "Москва, 1-я Дубровская улица, 5"
+    assert draft.missing_fields == ["payment_method"]
     assert provider.calls == []
 
 
@@ -729,6 +863,13 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
     assert Payment.objects.count() == 1
 
     last_prompt_messages = provider.calls[-1]["messages"]
-    assert any("Проверьте заказ:" in message.get("content", "") for message in last_prompt_messages)
+    assert not any(
+        "Проверьте заказ:" in message.get("content", "")
+        for message in last_prompt_messages
+    )
+    assert any(
+        "ответ типа order_preview" in message.get("content", "")
+        for message in last_prompt_messages
+    )
     assert product.public_code in provider.calls[-1]["system_prompt"]
     assert all("parameters" in function for function in provider.calls[0]["functions"])
