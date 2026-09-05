@@ -14,6 +14,7 @@ from apps.customers.services import CustomerService
 from apps.intake.enums import InboundEventStatus, OrderDraftStatus
 from apps.intake.models import Clarification, InboundEvent, OrderDraft
 from apps.intake.services import InboundEventService
+from apps.intake.storefront import SESSION_CUSTOMER_KEY
 from apps.orders.models import Order
 
 
@@ -37,7 +38,7 @@ def test_website_assistant_registers_customer_and_enqueues_event(
         data=json.dumps(
             {
                 "message": (
-                    "Две упаковки креветок, самовывоз. "
+                    "Меня зовут Анна. Две упаковки креветок, самовывоз. "
                     "Мой номер +7 999 123-45-67, email anna@example.com"
                 ),
                 "personal_data_consent": True,
@@ -55,6 +56,32 @@ def test_website_assistant_registers_customer_and_enqueues_event(
     assert event.customer.personal_data_consent is True
     assert event.raw_payload["source"] == "website_ai_assistant"
     assert response.json()["event_id"] == str(event.public_id)
+
+
+@pytest.mark.django_db
+def test_website_assistant_never_uses_manual_checkout_customer_from_session(
+    client, publish_stub, assistant_enabled
+):
+    previous_customer = CustomerService.create_customer(
+        name="Михаил",
+        phone="79113102222",
+        email="miha@yandex.ru",
+        first_source=Channel.WEBSITE,
+    )
+    session = client.session
+    session[SESSION_CUSTOMER_KEY] = previous_customer.pk
+    session.save()
+
+    response = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Хочу треску"}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 202
+    event = InboundEvent.objects.select_related("customer").get()
+    assert event.customer is None
+    assert event.raw_payload["contact_phone"] == ""
 
 
 @pytest.mark.django_db
@@ -95,11 +122,12 @@ def test_website_assistant_event_is_session_bound_and_returns_clarification(
 
 
 @pytest.mark.django_db
-def test_website_assistant_links_order_to_existing_customer_by_email(
+def test_website_assistant_links_order_to_existing_customer_by_explicit_phone(
     client, publish_stub, assistant_enabled
 ):
     customer = CustomerService.create_customer(
         name="Анна из CRM",
+        phone="79991234567",
         email="anna@example.com",
         first_source=Channel.EMAIL,
     )
@@ -108,7 +136,10 @@ def test_website_assistant_links_order_to_existing_customer_by_email(
         "/store/assistant/messages/",
         data=json.dumps(
             {
-                "message": "Одна упаковка креветок, самовывоз. Email: ANNA@example.com",
+                "message": (
+                    "Меня зовут Анна. Одна упаковка креветок, самовывоз. "
+                    "Телефон: +7 999 123-45-67, email ANNA@example.com"
+                ),
                 "personal_data_consent": True,
             }
         ),

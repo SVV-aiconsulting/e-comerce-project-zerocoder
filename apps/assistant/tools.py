@@ -718,10 +718,14 @@ class AssistantToolExecutor:
             return "Укажите адрес доставки."
         if "payment_method" in missing:
             return "Выберите способ оплаты: наличными при получении или картой онлайн."
+        if "customer" in missing:
+            return (
+                "Для оформления заказа укажите имя и контактный телефон "
+                "получателя в одном сообщении, например: «Меня зовут Анна, "
+                "+79991234567»."
+            )
         if "contact_phone" in missing:
             return "Укажите контактный телефон для доставки."
-        if "customer" in missing:
-            return "Сначала необходимо идентифицировать клиента."
         if "delivery_quote" in missing:
             return (
                 "Не удалось рассчитать доставку. Измените адрес, выберите "
