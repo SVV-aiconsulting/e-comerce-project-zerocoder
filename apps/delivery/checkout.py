@@ -86,6 +86,7 @@ class CheckoutDeliveryService:
                 destination_address=address,
                 items_total=totals.items_total,
                 payment_method=payment_method,
+                customer=customer,
             )
             if quote.status != DeliveryQuoteStatus.SUCCEEDED or quote.amount is None:
                 raise DeliveryDataIncompleteError(
@@ -119,7 +120,7 @@ class CheckoutDeliveryService:
         quote = DeliveryQuote.objects.filter(
             pk=quote_id,
             cart=cart,
-            kind=DeliveryQuoteKind.PRELIMINARY,
+            kind__in=[DeliveryQuoteKind.PRELIMINARY, DeliveryQuoteKind.OFFER],
             status=DeliveryQuoteStatus.SUCCEEDED,
         ).first()
         if quote is None or quote.amount is None:
