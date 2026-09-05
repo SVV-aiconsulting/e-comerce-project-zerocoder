@@ -566,6 +566,66 @@ def test_preview_surfaces_yandex_no_delivery_options(
 
 
 @pytest.mark.django_db
+def test_preview_distinguishes_yandex_test_http_500(
+    customer, product, delivery_rule, settings, monkeypatch
+):
+    settings.YANDEX_DELIVERY_ENABLED = True
+    conversation = "delivery-preview-500-dialog"
+    draft = seed_active_draft_with_product(customer, product, conversation)
+    draft.receiving_type = ReceivingType.DELIVERY
+    draft.delivery_address = "Москва, Тестовая улица, 1"
+    draft.payment_method = PaymentMethod.CARD_PREPAYMENT
+    draft.contact_phone = customer.phone
+    draft.save(
+        update_fields=[
+            "receiving_type",
+            "delivery_address",
+            "payment_method",
+            "contact_phone",
+            "updated_at",
+        ]
+    )
+    AssistantToolExecutor._refresh_state(draft)
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="delivery-preview-500",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Рассчитайте итог",
+    ).event
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+
+    def failed_quote(current_draft):
+        return DeliveryQuote.objects.create(
+            order_draft=current_draft,
+            environment=DeliveryEnvironment.TEST,
+            kind=DeliveryQuoteKind.PRELIMINARY,
+            status=DeliveryQuoteStatus.FAILED,
+            request_fingerprint="e" * 64,
+            destination_address=current_draft.delivery_address,
+            error_code="500",
+            error_message="Internal Server Error",
+        )
+
+    monkeypatch.setattr(
+        "apps.intake.fulfillment.YandexDeliveryQuoteService.quote_draft",
+        failed_quote,
+    )
+    monkeypatch.setattr(
+        "apps.intake.fulfillment.YandexDeliveryOfferService.create_for_draft",
+        failed_quote,
+    )
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    result = backend.execute("preview_order", {}, 1)
+
+    assert result["ok"] is False
+    assert "временно недоступен" in result["error"]["message"]
+    assert "не предложила вариант" not in result["error"]["message"]
+
+
+@pytest.mark.django_db
 def test_repeat_previous_order_immediately_returns_actual_preview(
     customer, product, delivery_rule, settings, monkeypatch
 ):

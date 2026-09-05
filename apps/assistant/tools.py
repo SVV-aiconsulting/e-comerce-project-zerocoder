@@ -49,6 +49,7 @@ from apps.payments.models import PaymentState
 from apps.payments.services import PaymentService
 from apps.customers.validators import normalize_email, normalize_phone
 from apps.delivery.models import DeliveryQuoteStatus
+from apps.delivery.checkout import normalize_delivery_address
 
 
 @dataclass(frozen=True)
@@ -376,7 +377,7 @@ class AssistantToolExecutor:
             arguments.update(
                 {
                     "receiving_type": ReceivingType.DELIVERY,
-                    "delivery_address": " ".join(self.event.raw_text.split()),
+                    "delivery_address": normalize_delivery_address(self.event.raw_text),
                 }
             )
 
@@ -616,6 +617,8 @@ class AssistantToolExecutor:
         for field in ("receiving_type", "delivery_address", "payment_method", "customer_comment"):
             value = getattr(args, field)
             if value is not None:
+                if field == "delivery_address":
+                    value = normalize_delivery_address(value)
                 updates[field] = value
         try:
             if args.contact_phone is not None:
@@ -653,14 +656,28 @@ class AssistantToolExecutor:
                 .first()
             )
             if failed_quote is not None:
+                code = failed_quote.error_code or "delivery_quote_failed"
+                if code == "no_delivery_options":
+                    message = (
+                        "Яндекс Доставка не предложила вариант для указанных "
+                        "адреса и параметров заказа. Измените адрес, выберите "
+                        "самовывоз или повторите расчёт позже."
+                    )
+                elif code.isdigit() and int(code) >= 500:
+                    message = (
+                        "Тестовый контур Яндекс Доставки временно недоступен. "
+                        "Корзина и адрес сохранены: повторите расчёт позже или "
+                        "выберите самовывоз."
+                    )
+                else:
+                    message = (
+                        "Не удалось рассчитать доставку. Проверьте адрес и "
+                        "повторите расчёт позже."
+                    )
                 error.update(
                     {
-                        "code": failed_quote.error_code or "delivery_quote_failed",
-                        "message": (
-                            "Яндекс Доставка не предложила вариант для указанных "
-                            "адреса и параметров заказа. Измените адрес, выберите "
-                            "самовывоз или повторите расчёт позже."
-                        ),
+                        "code": code,
+                        "message": message,
                         "provider_message": failed_quote.error_message,
                     }
                 )

@@ -7,6 +7,7 @@ from apps.intake.ai.schemas import OrderExtraction
 from apps.intake.clarifications import ClarificationService
 from apps.intake.draft_application import DraftExtractionApplier
 from apps.intake.enums import OrderDraftStatus
+from apps.intake.exceptions import DraftNotReadyError
 from apps.intake.fulfillment import DraftOrderConversionService, DraftPricingService
 from apps.intake.services import InboundEventService, OrderDraftService
 from apps.orders.models import Order
@@ -88,3 +89,30 @@ def test_preview_confirmation_and_conversion_are_idempotent(customer, product):
     assert confirmed.converted_order_id == first_order.pk
     assert first_order.items.count() == 1
     assert first_order.items.get().quantity == 2
+
+
+@pytest.mark.django_db
+def test_resumed_draft_uses_current_catalog_price_and_revalidates_product(
+    customer, product
+):
+    draft, _ = OrderDraftService.get_or_create_active(
+        customer=customer,
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+        conversation_key="resumed-draft",
+    )
+    draft = DraftExtractionApplier.apply(draft, extraction())
+
+    # Цена изменилась, пока клиент не отвечал в диалоге.
+    product.base_price = 125
+    product.save(update_fields=["base_price", "updated_at"])
+
+    preview = DraftPricingService.preview(draft)
+
+    assert preview.items_total == 250
+    assert preview.total_amount == 250
+
+    product.is_active = False
+    product.save(update_fields=["is_active", "updated_at"])
+    with pytest.raises(DraftNotReadyError, match="недоступен"):
+        DraftPricingService.preview(draft)

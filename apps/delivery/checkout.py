@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
+import re
 
 from django.conf import settings
 from django.utils import timezone
@@ -22,7 +23,16 @@ class CheckoutDeliveryPreview:
 
 
 def normalize_delivery_address(value: str) -> str:
-    return " ".join((value or "").split())
+    address = " ".join((value or "").split())
+    # В диалоге клиент часто пишет «адрес доставки Москва, ...». Это не часть
+    # адреса и она ломает геокодирование тестового API Яндекса.
+    return re.sub(
+        r"^(?:адрес(?:\s+доставки)?|доставка|доставить(?:\s+по\s+адресу)?)"
+        r"\s*[:,-]?\s+",
+        "",
+        address,
+        flags=re.IGNORECASE,
+    )
 
 
 class CheckoutDeliveryService:

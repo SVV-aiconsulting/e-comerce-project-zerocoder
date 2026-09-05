@@ -8,6 +8,8 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.catalog.services import CatalogService
+from apps.common.exceptions import MinQuantityError, ProductUnavailableError
 from apps.common.enums import ReceivingType
 from apps.intake.enums import (
     ACTIVE_DRAFT_STATUSES,
@@ -191,8 +193,16 @@ class OrderDraftService:
                 or item.requested_quantity is None
             ):
                 errors.append(f"Позиция {item.line_number} не готова")
-            elif not item.product.is_active:
-                errors.append(f"Позиция {item.line_number} недоступна")
+            else:
+                # Черновик мог ждать ответа клиента часами: цену берём при
+                # preview из текущей карточки товара, а доступность и минимум
+                # перепроверяем непосредственно перед подтверждением.
+                try:
+                    CatalogService.check_availability(
+                        item.product, item.requested_quantity
+                    )
+                except (MinQuantityError, ProductUnavailableError) as exc:
+                    errors.append(str(exc))
 
         if errors:
             raise DraftNotReadyError("; ".join(errors))

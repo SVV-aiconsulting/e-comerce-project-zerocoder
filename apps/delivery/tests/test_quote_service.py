@@ -20,6 +20,7 @@ from apps.delivery.quote_service import (
     YandexDeliveryQuoteService,
     build_pricing_payload,
 )
+from apps.delivery.offer_service import YandexDeliveryOfferService
 from apps.delivery.yandex.client import YandexDeliveryClient, YandexDeliveryConfig
 from apps.orders.services import OrderService
 from apps.intake.enums import ItemMatchStatus, OrderDraftStatus
@@ -267,3 +268,65 @@ def test_ai_preview_uses_yandex_quote_and_conversion_keeps_it(
     shipment = Shipment.objects.get(order=order)
     assert shipment.amount == Decimal("123.45")
     assert shipment.quote.status == DeliveryQuoteStatus.SELECTED
+
+
+@pytest.mark.django_db
+def test_ai_preview_uses_test_offer_only_after_pricing_http_500(
+    customer, product, delivery_rule, settings, monkeypatch
+):
+    settings.YANDEX_DELIVERY_ENABLED = True
+    draft = OrderDraft.objects.create(
+        customer=customer,
+        channel=Channel.TELEGRAM,
+        external_user_id="fallback-user",
+        conversation_key="fallback-conversation",
+        status=OrderDraftStatus.READY_FOR_PREVIEW,
+        receiving_type=ReceivingType.DELIVERY,
+        delivery_address="Москва, Тверская улица, 1",
+        payment_method=PaymentMethod.CARD_PREPAYMENT,
+        contact_phone=customer.phone,
+    )
+    OrderDraftItem.objects.create(
+        draft=draft,
+        line_number=1,
+        raw_product_name=product.name,
+        requested_quantity=Decimal("1"),
+        requested_unit=product.unit,
+        product=product,
+        match_status=ItemMatchStatus.MATCHED,
+    )
+
+    def failed_pricing(current_draft):
+        return DeliveryQuote.objects.create(
+            order_draft=current_draft,
+            environment=DeliveryEnvironment.TEST,
+            kind=DeliveryQuoteKind.PRELIMINARY,
+            status=DeliveryQuoteStatus.FAILED,
+            request_fingerprint="p" * 64,
+            destination_address=current_draft.delivery_address,
+            error_code="500",
+            error_message="Internal Server Error",
+        )
+
+    def successful_offer(current_draft):
+        return DeliveryQuote.objects.create(
+            order_draft=current_draft,
+            environment=DeliveryEnvironment.TEST,
+            kind=DeliveryQuoteKind.OFFER,
+            status=DeliveryQuoteStatus.SUCCEEDED,
+            request_fingerprint="o" * 64,
+            external_offer_id="test-offer",
+            destination_address=current_draft.delivery_address,
+            amount=Decimal("321.50"),
+            currency="RUB",
+            delivery_days=2,
+        )
+
+    monkeypatch.setattr(YandexDeliveryQuoteService, "quote_draft", failed_pricing)
+    monkeypatch.setattr(YandexDeliveryOfferService, "create_for_draft", successful_offer)
+
+    preview = DraftPricingService.preview(draft)
+
+    assert preview.status == OrderDraftStatus.AWAITING_CONFIRMATION
+    assert preview.delivery_cost == Decimal("321.50")
+    assert preview.delivery_quotes.filter(status=DeliveryQuoteStatus.FAILED).count() == 1
