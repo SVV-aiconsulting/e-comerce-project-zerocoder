@@ -9,11 +9,13 @@ from apps.carts.services import CartService
 from apps.common.enums import ReceivingType, StatusChangeSource
 from apps.common.exceptions import DeliveryError
 from apps.delivery.models import (
+    DeliveryEnvironment,
     DeliveryQuoteStatus,
     Shipment,
     ShipmentStatus,
 )
 from apps.delivery.quote_service import YandexDeliveryQuoteService
+from apps.delivery.offer_service import YandexDeliveryOfferService
 from apps.intake.enums import OrderDraftStatus
 from apps.intake.exceptions import DraftStateError
 from apps.intake.models import OrderDraft
@@ -50,6 +52,25 @@ class DraftPricingService:
                 quote = YandexDeliveryQuoteService.quote_draft(draft)
             except DeliveryError:
                 quote = None
+            # В общем тестовом контуре pricing-calculator может отвечать HTTP
+            # 500 при валидном запросе. offers/create использует тот же API,
+            # но возвращает реальные цену и интервал; он не подтверждает
+            # доставку. Fallback строго ограничен test-контуром.
+            if (
+                quote is not None
+                and quote.status != DeliveryQuoteStatus.SUCCEEDED
+                and quote.environment == DeliveryEnvironment.TEST
+                and (
+                    not quote.error_code
+                    or quote.error_code == "no_delivery_options"
+                    or quote.error_code.isdigit()
+                    and int(quote.error_code) >= 500
+                )
+            ):
+                try:
+                    quote = YandexDeliveryOfferService.create_for_draft(draft)
+                except DeliveryError:
+                    quote = None
             if not quote or quote.status != DeliveryQuoteStatus.SUCCEEDED:
                 draft.status = OrderDraftStatus.NEEDS_CLARIFICATION
                 draft.missing_fields = ["delivery_quote"]

@@ -296,13 +296,13 @@ class YandexDeliveryQuoteService:
         try:
             result = api_client.calculate_price(payload)
         except YandexDeliveryAPIError as exc:
-            # Общедоступный test-контур периодически отвечает
-            # no_delivery_options на неизменный валидный payload, а следующий
-            # вызов успешно рассчитывает тот же маршрут. Один ограниченный retry
-            # повышает стабильность MVP и никогда не применяется в production.
+            # Общедоступный test-контур периодически отвечает transient-ошибкой
+            # (в том числе HTTP 500) на неизменный валидный payload. Один
+            # ограниченный retry повышает стабильность MVP и никогда не
+            # применяется в production.
             if (
                 config.environment == DeliveryEnvironment.TEST
-                and exc.code == "no_delivery_options"
+                and (exc.retryable or exc.code == "no_delivery_options")
             ):
                 recovered_error = exc
                 try:
