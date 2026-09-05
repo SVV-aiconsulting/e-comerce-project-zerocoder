@@ -242,6 +242,99 @@ class AssistantToolExecutor:
             "count": len(products),
         }
 
+    @staticmethod
+    def _word_matches(left: str, right: str) -> bool:
+        """Сопоставляет простые русские словоформы без отдельного NLP-пакета."""
+        if left == right:
+            return True
+        shortest = min(len(left), len(right))
+        if shortest < 4:
+            return False
+        common = 0
+        for left_char, right_char in zip(left, right):
+            if left_char != right_char:
+                break
+            common += 1
+        return common >= max(3, min(5, shortest - 1))
+
+    @classmethod
+    def _variant_is_mentioned(cls, text: str, variant: str) -> bool:
+        text_words = normalize_product_text(text).split()
+        variant_words = normalize_product_text(variant).split()
+        return bool(variant_words) and all(
+            any(cls._word_matches(expected, actual) for actual in text_words)
+            for expected in variant_words
+        )
+
+    @classmethod
+    def _mentioned_products(cls, text: str) -> list[Product]:
+        mentioned = []
+        for product in CatalogService.get_active_products().prefetch_related("aliases"):
+            variants = [product.name, *(alias.alias for alias in product.aliases.all())]
+            if any(cls._variant_is_mentioned(text, variant) for variant in variants):
+                mentioned.append(product)
+        return mentioned
+
+    def catalog_action(self):
+        """Детерминированно направляет вопросы о каталоге в источник истины."""
+        text = normalize_product_text(self.event.raw_text)
+        if re.search(r"\b(?:заказ\w*|корзин\w*)\b", text):
+            return None
+        catalog_question = bool(
+            re.search(
+                r"\b(?:каталог\w*|ассортимент\w*|продаж\w*|описан\w*|"
+                r"состав\w*|вход\w*|подробн\w*|расскаж\w*)\b",
+                text,
+            )
+            or re.search(r"\bчто\s+у\s+вас\s+есть\b", text)
+        )
+        if not catalog_question:
+            return None
+        products = self._mentioned_products(text)
+        if products:
+            names = {product.name for product in products}
+            if len(names) == 1:
+                query = next(iter(names))
+            else:
+                # Общий синоним вроде «рыба» должен вернуть всю категорию.
+                aliases = [
+                    alias.alias
+                    for product in products
+                    for alias in product.aliases.all()
+                    if self._variant_is_mentioned(text, alias.alias)
+                ]
+                query = max(aliases, key=len) if aliases else ""
+        else:
+            query = ""
+        return "search_products", {"query": query, "limit": 30}
+
+    def preview_action(self):
+        """Не отдаёт короткое согласие модели, если черновик уже готов к расчёту."""
+        draft = self._draft()
+        if draft.status != OrderDraftStatus.READY_FOR_PREVIEW:
+            return None
+        text = normalize_product_text(self.event.raw_text)
+        if re.fullmatch(
+            r"(?:да|рассчитай(?:те)?(?:\s+(?:итог|заказ))?|"
+            r"покажи(?:те)?\s+(?:итог|расч[её]т)|я\s+уже\s+указал(?:а)?)",
+            text,
+        ):
+            return "preview_order", {}
+        return None
+
+    def repeat_order_action(self):
+        """Распознаёт явный запрос повтора без ожидания решения модели."""
+        text = normalize_product_text(self.event.raw_text)
+        if not (
+            re.search(r"\bповтор\w*\b", text)
+            and re.search(r"\bзаказ\w*\b", text)
+        ):
+            return None
+        number = re.search(r"\b[0-9A-F]{10}\b", self.event.raw_text.upper())
+        return "repeat_order", {
+            "order_number": number.group(0) if number else None,
+        }
+
     def _cart_payload(self, draft=None) -> dict:
         draft = draft or self._draft()
         items = [
@@ -316,6 +409,22 @@ class AssistantToolExecutor:
         product = Product.objects.filter(public_code=args.product_code, is_active=True).first()
         if product is None:
             raise ValueError("Активный товар с таким кодом не найден")
+        mentioned = self._mentioned_products(self.event.raw_text)
+        if mentioned and product.pk not in {item.pk for item in mentioned}:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "product_mismatch",
+                    "message": (
+                        "Код товара не соответствует названию в сообщении клиента. "
+                        "Повторно найдите указанный товар в каталоге."
+                    ),
+                    "mentioned_products": [
+                        {"code": item.public_code, "name": item.name}
+                        for item in mentioned
+                    ],
+                },
+            }
         quantity = Decimal(str(args.quantity))
         CatalogService.check_availability(product, quantity)
         draft = self._prepare_change()
@@ -402,7 +511,29 @@ class AssistantToolExecutor:
             return {"ok": False, "error": {"code": "draft_incomplete", "message": "Для расчёта не хватает данных", "missing_fields": draft.missing_fields}, "cart": self._cart_payload(draft)}
         draft = DraftPricingService.preview(draft)
         if draft.status != OrderDraftStatus.AWAITING_CONFIRMATION:
-            return {"ok": False, "error": {"code": "preview_failed", "message": "Не удалось выполнить актуальный расчёт", "missing_fields": draft.missing_fields}}
+            error = {
+                "code": "preview_failed",
+                "message": "Не удалось выполнить актуальный расчёт",
+                "missing_fields": draft.missing_fields,
+            }
+            failed_quote = (
+                draft.delivery_quotes.filter(status=DeliveryQuoteStatus.FAILED)
+                .order_by("-created_at", "-id")
+                .first()
+            )
+            if failed_quote is not None:
+                error.update(
+                    {
+                        "code": failed_quote.error_code or "delivery_quote_failed",
+                        "message": (
+                            "Яндекс Доставка не предложила вариант для указанных "
+                            "адреса и параметров заказа. Измените адрес, выберите "
+                            "самовывоз или повторите расчёт позже."
+                        ),
+                        "provider_message": failed_quote.error_message,
+                    }
+                )
+            return {"ok": False, "error": error}
         result = self._cart_payload(draft)
         result["preview"] = {
             "revision": draft.previewed_revision,
@@ -473,7 +604,7 @@ class AssistantToolExecutor:
         placed_scope = bool(
             re.search(r"\b(?:оформлен\w*|создан\w*|оплачен\w*)\s+заказ\w*\b", text)
         )
-        order_number = re.search(r"\b[0-9A-FА-Я]{10}\b", self.event.raw_text.upper())
+        order_number = re.search(r"\b[0-9A-F]{10}\b", self.event.raw_text.upper())
 
         if current_scope and (has_cancel_verb or pending_choice):
             return "clear_cart", {"confirmation": "clear_current_cart"}
