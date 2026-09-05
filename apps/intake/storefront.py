@@ -27,18 +27,24 @@ from apps.delivery.checkout import CheckoutDeliveryService
 from apps.orders.services import OrderService
 from apps.payments.exceptions import PaymentError
 from apps.payments.services import PaymentService
-from apps.intake.enums import InboundEventKind
-from apps.intake.models import InboundEvent
+from apps.intake.enums import ACTIVE_DRAFT_STATUSES, InboundEventKind
+from apps.intake.models import InboundEvent, OrderDraft
 from apps.intake.responses import InboundEventResponseService
 from apps.intake.services import InboundEventService
 
 SESSION_USER_KEY = "website_external_user_id"
 SESSION_CUSTOMER_KEY = "website_customer_id"
 SESSION_ASSISTANT_CONVERSATION_KEY = "website_assistant_conversation_id"
+SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY = "website_assistant_identity_conversation_id"
 ASSISTANT_MESSAGE_MAX_LENGTH = 20_000
 PHONE_IN_TEXT_RE = re.compile(r"(?<!\d)(?:\+7|7|8)[\s().-]*\d(?:[\s().-]*\d){9}(?!\d)")
 EMAIL_IN_TEXT_RE = re.compile(
     r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.+-])"
+)
+NAME_IN_TEXT_RE = re.compile(
+    r"\b(?:меня\s+зовут|мо[её]\s+имя|имя)\s*[:,-]?\s*"
+    r"([А-ЯЁA-Z][а-яёa-z-]{1,63})\b",
+    re.IGNORECASE,
 )
 
 
@@ -131,6 +137,32 @@ def contacts_from_message(message: str) -> tuple[str, str]:
         except ValidationError:
             email = ""
     return phone, email
+
+
+def contact_name_from_message(message: str) -> str:
+    """Вернуть имя, только если клиент назвал его явно в AI-диалоге."""
+    match = NAME_IN_TEXT_RE.search(message)
+    if match is None:
+        return ""
+    return match.group(1).strip().title()
+
+
+def active_assistant_draft(*, external_user_id: str, conversation_key: str):
+    """Текущий черновик нужен только для дозаполнения явно начатой анкеты.
+
+    Нельзя использовать ``website_customer_id`` из browser session: он относится
+    к прежнему ручному checkout и не является идентификатором нового посетителя.
+    """
+    return (
+        OrderDraft.objects.filter(
+            channel=Channel.WEBSITE,
+            external_user_id=external_user_id,
+            conversation_key=conversation_key,
+            status__in=ACTIVE_DRAFT_STATUSES,
+        )
+        .order_by("-updated_at", "-pk")
+        .first()
+    )
 
 
 def identify_from_payload(request, payload: dict):
@@ -331,18 +363,40 @@ class WebsiteAssistantMessageView(WebsiteApiView):
         if len(message) > ASSISTANT_MESSAGE_MAX_LENGTH:
             return json_error("Сообщение слишком длинное.")
 
-        customer = session_customer(request)
+        external_user_id = get_or_create_website_user_id(request)
+        conversation_key = get_or_create_assistant_conversation_key(request)
+        # Website не имеет регистрации. Поэтому сохранённая карточка из browser
+        # session никогда не применяется к AI-диалогу: имя и телефон должен
+        # явно передать именно текущий посетитель.
+        customer = None
         phone, email = contacts_from_message(message)
-        if phone or email:
+        name = contact_name_from_message(message)
+        draft = active_assistant_draft(
+            external_user_id=external_user_id,
+            conversation_key=conversation_key,
+        )
+        identity_is_explicit_for_conversation = (
+            request.session.get(SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY)
+            == conversation_key
+        )
+        if identity_is_explicit_for_conversation and not phone and draft is not None:
+            phone = draft.contact_phone
+        if identity_is_explicit_for_conversation and not email and draft is not None:
+            email = draft.contact_email
+
+        if phone or email or name:
             if not payload.get("personal_data_consent"):
                 return json_error(
                     "Отметьте согласие на обработку данных, чтобы передать контакты для заказа."
                 )
+        # Email нужен для чека, но не может быть website-идентификатором AI
+        # заказа. Это исключает подмену клиента из старой session/cookie.
+        if name and phone:
             identity = CustomerService.resolve_website_customer(
-                name="Покупатель",
+                name=name,
                 phone=phone,
                 email=email,
-                external_user_id=get_or_create_website_user_id(request),
+                external_user_id=external_user_id,
             )
             customer = identity.customer
             if customer is None:
@@ -350,14 +404,17 @@ class WebsiteAssistantMessageView(WebsiteApiView):
             if not customer.personal_data_consent:
                 customer.personal_data_consent = True
                 customer.save(update_fields=["personal_data_consent", "updated_at"])
-            request.session[SESSION_CUSTOMER_KEY] = customer.pk
-
-        external_user_id = get_or_create_website_user_id(request)
+            request.session[SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY] = conversation_key
+            request.session.modified = True
+        elif draft is not None and draft.customer_id and not identity_is_explicit_for_conversation:
+            # Черновик, созданный до разделения ручного checkout и AI identity,
+            # не должен продолжить оформление от имени старого посетителя.
+            OrderDraft.objects.filter(pk=draft.pk).update(customer=None)
         registration = InboundEventService.register(
             channel=Channel.WEBSITE,
             external_event_id=str(uuid.uuid4()),
             external_user_id=external_user_id,
-            conversation_key=get_or_create_assistant_conversation_key(request),
+            conversation_key=conversation_key,
             customer=customer,
             kind=InboundEventKind.MESSAGE,
             raw_text=message,
@@ -424,5 +481,6 @@ class WebsiteAssistantConversationView(WebsiteApiView):
 
     def post(self, request):
         request.session[SESSION_ASSISTANT_CONVERSATION_KEY] = str(uuid.uuid4())
+        request.session.pop(SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY, None)
         request.session.modified = True
         return JsonResponse({"messages": [], "status": "new"}, status=201)

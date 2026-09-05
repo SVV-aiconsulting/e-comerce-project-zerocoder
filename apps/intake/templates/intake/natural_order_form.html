@@ -171,10 +171,10 @@
       <button class="assistant-close" type="button" data-close-assistant aria-label="Закрыть чат">×</button>
     </div>
   </div>
-  <p class="assistant-note">Подбираю товары только из каталога, а цены, доставка и оплата рассчитываются сервером. Для доставки консультант попросит номер телефона — отметьте согласие перед его отправкой.</p>
+  <p class="assistant-note">Подбираю товары только из каталога, а цены, доставка и оплата рассчитываются сервером. Перед оформлением консультант попросит имя и номер телефона — отметьте согласие перед их отправкой.</p>
   <div class="assistant-messages" data-assistant-messages aria-live="polite">
     <article class="assistant-message assistant-message--assistant">
-      Здравствуйте! Напишите, что хотите заказать. Помогу подобрать товары, доставку и оплату. Номер телефона понадобится только для оформления доставки.
+      Здравствуйте! Напишите, что хотите заказать. Помогу подобрать товары, доставку и оплату. Перед оформлением попрошу имя и номер телефона.
     </article>
   </div>
   <form class="assistant-form" data-assistant-form>
@@ -182,7 +182,7 @@
     <textarea id="assistant-message" class="field-textarea" name="message" rows="3" maxlength="20000" placeholder="Например: хочу рыбу на ужин, помогите выбрать"></textarea>
     <label class="assistant-consent">
       <input type="checkbox" name="personal_data_consent">
-      Согласен на обработку данных, если сообщаю телефон или email
+      Согласен на обработку данных, если сообщаю имя, телефон или email
     </label>
     <p class="form-error" data-assistant-error hidden></p>
     <button class="btn btn-primary form-submit" type="submit" data-assistant-submit>Отправить</button>
