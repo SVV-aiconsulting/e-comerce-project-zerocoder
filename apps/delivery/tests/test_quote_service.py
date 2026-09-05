@@ -149,6 +149,68 @@ def test_quote_order_saves_result_and_sync_audit(
 
 
 @pytest.mark.django_db
+def test_test_environment_retries_one_transient_no_delivery_options(
+    active_cart,
+    product,
+    customer,
+    delivery_rule,
+):
+    product.delivery_weight_grams = 100
+    product.delivery_length_cm = 10
+    product.delivery_width_cm = 10
+    product.delivery_height_cm = 10
+    product.save()
+    CartService.set_item_quantity(active_cart, product, Decimal("1"))
+    order = OrderService.create_order_from_cart(
+        active_cart,
+        customer=customer,
+        channel=Channel.TELEGRAM,
+        receiving_type=ReceivingType.DELIVERY,
+        payment_method=PaymentMethod.CARD_PREPAYMENT,
+        delivery_address="Москва, Тверская улица, 1",
+    )
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(
+                400,
+                json={
+                    "code": "no_delivery_options",
+                    "message": "No delivery options for interval",
+                },
+            )
+        return httpx.Response(
+            200,
+            json={"pricing_total": "321.50 RUB", "delivery_days": 2},
+        )
+
+    api_config = YandexDeliveryConfig(
+        enabled=True,
+        environment=DeliveryEnvironment.TEST,
+        token="test-token",
+        station_id="test-station",
+        timeout_seconds=5,
+    )
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http_client:
+        quote = YandexDeliveryQuoteService.quote_order(
+            order,
+            client=YandexDeliveryClient(api_config, http_client=http_client),
+        )
+
+    assert attempts == 2
+    assert quote.status == DeliveryQuoteStatus.SUCCEEDED
+    assert quote.amount == Decimal("321.50")
+    assert quote.response_payload["_webmarket_retry"] == {
+        "attempts": 2,
+        "recovered_code": "no_delivery_options",
+        "recovered_message": "No delivery options for interval",
+    }
+
+
+@pytest.mark.django_db
 def test_ai_preview_uses_yandex_quote_and_conversion_keeps_it(
     customer,
     product,
