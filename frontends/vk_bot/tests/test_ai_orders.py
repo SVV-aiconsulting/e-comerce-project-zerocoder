@@ -51,4 +51,5 @@ async def test_natural_order_is_submitted_and_response_is_sent(monkeypatch):
         attempts=3,
         interval=0,
     )
-    assert send_message.await_args_list[-1].args[2] == "Как будете оплачивать?"
+    assert send_message.await_count == 1
+    assert send_message.await_args.args[2] == "Как будете оплачивать?"

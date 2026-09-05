@@ -7,13 +7,17 @@ from vkbottle.bot import Message
 
 from vk_bot.api.errors import ApiError, BackendUnavailableError
 from vk_bot.constants import CONFLICT_USER_MESSAGE
-from vk_bot.handlers.catalog import show_catalog
 from vk_bot.handlers.common import answer_api_error
 from vk_bot.keyboards import main_menu_keyboard
 from vk_bot.services.error_messages import is_phone_validation_error
 from vk_bot.services.session import apply_identify_response
 from vk_bot.states import RegistrationStates
-from vk_bot.texts import REGISTRATION_PROMPT, REGISTRATION_RETRY, REGISTRATION_SUCCESS
+from vk_bot.texts import (
+    AI_ASSISTANT_WELCOME,
+    REGISTRATION_PROMPT,
+    REGISTRATION_RETRY,
+    REGISTRATION_SUCCESS,
+)
 from vk_bot.utils import (
     basic_phone_check,
     channel,
@@ -87,10 +91,9 @@ async def handle_phone_registration(message: Message, api_holder: dict) -> None:
     await send_message(
         message.ctx_api,
         peer_id,
-        REGISTRATION_SUCCESS.format(name=name),
+        f"{REGISTRATION_SUCCESS.format(name=name)}\n\n{AI_ASSISTANT_WELCOME}",
         main_menu_keyboard(),
     )
-    await show_catalog(message.ctx_api, peer_id, user_id, api, api_holder)
 
 
 def register_registration_handlers(bot, api_holder: dict) -> None:

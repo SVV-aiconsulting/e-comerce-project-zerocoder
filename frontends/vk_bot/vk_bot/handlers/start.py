@@ -7,12 +7,11 @@ from vkbottle.bot import Message
 from vkbottle.dispatch.rules.base import CommandRule, FuncRule
 
 from vk_bot.api.errors import ApiError, BackendUnavailableError
-from vk_bot.handlers.catalog import show_catalog
 from vk_bot.handlers.common import answer_api_error, identify_without_phone
 from vk_bot.handlers.registration import prompt_registration
 from vk_bot.keyboards import main_menu_keyboard
 from vk_bot.services.session import apply_identify_response, is_identified
-from vk_bot.texts import START_FAILED, WELCOME_BACK
+from vk_bot.texts import AI_ASSISTANT_WELCOME, START_FAILED, WELCOME_BACK
 from vk_bot.utils import get_session, save_session, send_message
 
 logger = logging.getLogger(__name__)
@@ -49,17 +48,20 @@ async def handle_start(message: Message, api_holder: dict) -> None:
 
         name = session.get("display_name") or "друг"
         if was_identified:
-            await show_catalog(message.ctx_api, peer_id, user_id, api, api_holder)
-            await send_message(message.ctx_api, peer_id, "Меню:", main_menu_keyboard())
+            await send_message(
+                message.ctx_api,
+                peer_id,
+                f"{AI_ASSISTANT_WELCOME}\n\nМеню:",
+                main_menu_keyboard(),
+            )
             return
 
         await send_message(
             message.ctx_api,
             peer_id,
-            WELCOME_BACK.format(name=name),
+            f"{WELCOME_BACK.format(name=name)}\n\n{AI_ASSISTANT_WELCOME}",
             main_menu_keyboard(),
         )
-        await show_catalog(message.ctx_api, peer_id, user_id, api, api_holder)
         return
 
     if response.get("status") == "registration_required":

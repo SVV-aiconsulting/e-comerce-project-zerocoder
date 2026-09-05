@@ -35,11 +35,6 @@ async def handle_natural_order_message(message, api_holder: dict) -> None:
                 },
             }
         )
-        await send_message(
-            message.ctx_api,
-            message.peer_id,
-            "Принял запрос, проверяю товары и условия заказа…",
-        )
         result = await api.wait_for_inbound_event(
             submission["event_id"],
             channel=channel(),
