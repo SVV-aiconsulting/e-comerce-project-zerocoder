@@ -3,6 +3,22 @@ from rest_framework.test import APIClient
 
 from apps.common.enums import Channel
 from apps.customers.models import CustomerChannelIdentity, CustomerIdentityConflict
+from apps.privacy.models import ConsentMethod, ConsentStatus, IdentityType
+from apps.privacy.services import ConsentService
+
+
+def grant_consent(channel, external_user_id):
+    ConsentService.record(
+        channel=channel,
+        identity_type={
+            Channel.TELEGRAM: IdentityType.TELEGRAM_USER_ID,
+            Channel.VK: IdentityType.VK_USER_ID,
+        }[channel],
+        identity_value=external_user_id,
+        source="api_test",
+        status=ConsentStatus.GRANTED,
+        expression_method=ConsentMethod.BOT_BUTTON,
+    )
 
 
 @pytest.mark.django_db
@@ -10,6 +26,7 @@ def test_identify_customer_requires_phone_for_unknown_identity(settings):
     settings.ADAPTER_API_TOKENS = ["test-token"]
     client = APIClient()
     client.credentials(HTTP_X_ADAPTER_TOKEN="test-token")
+    grant_consent(Channel.TELEGRAM, "tg-unknown")
 
     response = client.post(
         "/api/identify-customer/",
@@ -28,6 +45,7 @@ def test_identify_customer_creates_new_customer_with_phone(settings):
     settings.ADAPTER_API_TOKENS = ["test-token"]
     client = APIClient()
     client.credentials(HTTP_X_ADAPTER_TOKEN="test-token")
+    grant_consent(Channel.TELEGRAM, "tg-777")
 
     response = client.post(
         "/api/identify-customer/",
@@ -50,6 +68,10 @@ def test_identify_customer_creates_new_customer_with_phone(settings):
     assert response.data["phone"] == "79123456781"
     assert response.data["display_name"] == "Новый клиент"
     assert response.data["channel"] == Channel.TELEGRAM
+    assert CustomerChannelIdentity.objects.get(
+        channel=Channel.TELEGRAM,
+        external_user_id="tg-777",
+    ).customer.personal_data_consent is True
 
 
 @pytest.mark.django_db
@@ -57,6 +79,7 @@ def test_identify_customer_creates_second_channel_card_on_phone_conflict(custome
     settings.ADAPTER_API_TOKENS = ["test-token"]
     client = APIClient()
     client.credentials(HTTP_X_ADAPTER_TOKEN="test-token")
+    grant_consent(Channel.VK, "vk-777")
 
     response = client.post(
         "/api/identify-customer/",

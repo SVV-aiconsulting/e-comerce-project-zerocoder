@@ -10,6 +10,7 @@ from apps.api.serializers.identify import (
 )
 from apps.common.exceptions import ChannelIdentityAlreadyLinkedError
 from apps.customers.services import CustomerService
+from apps.privacy.services import ConsentService
 
 
 class IdentifyCustomerView(APIView):
@@ -22,6 +23,19 @@ class IdentifyCustomerView(APIView):
         request_serializer = IdentifyCustomerRequestSerializer(data=request.data)
         request_serializer.is_valid(raise_exception=True)
         payload = request_serializer.validated_data
+        if not ConsentService.has_current_consent(
+            channel=payload["channel"], identity_value=payload["external_user_id"]
+        ):
+            return Response(
+                {
+                    "status": "consent_required",
+                    "registration_required": False,
+                    "next_action": "request_personal_data_consent",
+                    "channel": payload["channel"],
+                    "external_user_id": payload["external_user_id"],
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
         phone_verification_source = payload.get("phone_verification_source", "manual_input")
         trusted_phone = payload.get("phone_verified", False) or phone_verification_source in {
             "platform_contact",
@@ -60,6 +74,11 @@ class IdentifyCustomerView(APIView):
             "external_user_id": payload["external_user_id"],
         }
         if result.customer:
+            if not result.customer.personal_data_consent:
+                result.customer.personal_data_consent = True
+                result.customer.save(
+                    update_fields=["personal_data_consent", "updated_at"]
+                )
             response_payload["customer_id"] = result.customer.pk
             response_payload["customer_public_code"] = result.customer.public_code
             response_payload["phone"] = result.customer.phone

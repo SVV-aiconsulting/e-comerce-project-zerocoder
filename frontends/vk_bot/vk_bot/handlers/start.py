@@ -9,7 +9,7 @@ from vkbottle.dispatch.rules.base import CommandRule, FuncRule
 from vk_bot.api.errors import ApiError, BackendUnavailableError
 from vk_bot.handlers.common import answer_api_error, identify_without_phone
 from vk_bot.handlers.registration import prompt_registration
-from vk_bot.keyboards import main_menu_keyboard
+from vk_bot.keyboards import main_menu_keyboard, personal_data_consent_keyboard
 from vk_bot.services.session import apply_identify_response, is_identified
 from vk_bot.texts import AI_ASSISTANT_WELCOME, START_FAILED, WELCOME_BACK
 from vk_bot.utils import get_session, save_session, send_message
@@ -30,6 +30,20 @@ async def handle_start(message: Message, api_holder: dict) -> None:
     peer_id = message.peer_id
     api = api_holder["api"]
     bot = api_holder["bot"]
+
+    try:
+        consent = await api.get_personal_data_consent(channel="vk", external_user_id=str(user_id))
+    except (ApiError, BackendUnavailableError) as exc:
+        await answer_api_error(message.ctx_api, peer_id, exc)
+        return
+    if not consent.get("granted"):
+        await send_message(
+            message.ctx_api, peer_id,
+            "Для регистрации и оформления заказа требуется отдельное согласие на обработку персональных данных.\n\n"
+            f"Политика: {consent['policy_url']}\nСогласие: {consent['consent_url']}",
+            personal_data_consent_keyboard(),
+        )
+        return
 
     session = get_session(str(user_id))
     was_identified = is_identified(session)
@@ -72,6 +86,34 @@ async def handle_start(message: Message, api_holder: dict) -> None:
 
 
 def register_start_handlers(bot, api_holder: dict) -> None:
+    from vkbottle import GroupEventType
+    from vkbottle.bot import MessageEvent
+
+    from vk_bot.rules import cmd_payload
+    from vk_bot.utils_events import answer_callback, parse_event_payload
+
+    @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, MessageEvent, cmd_payload("privacy"))
+    async def privacy_choice(event: MessageEvent):
+        payload = parse_event_payload(event) or {}
+        action = payload.get("action")
+        if action not in {"granted", "declined"}:
+            await answer_callback(event, snackbar="Некорректное действие")
+            return
+        await api_holder["api"].record_personal_data_consent(
+            channel="vk", external_user_id=str(event.user_id),
+            action=action, source="vk_bot_button",
+        )
+        text = "Согласие сохранено. Напишите «Начать» для продолжения." if action == "granted" else "Без обработки необходимых данных регистрация и оформление заказа недоступны."
+        await send_message(event.ctx_api, event.peer_id, text)
+        await answer_callback(event)
+
+    @bot.on.message(CommandRule("privacy_withdraw"))
+    async def privacy_withdraw(message: Message):
+        await api_holder["api"].record_personal_data_consent(
+            channel="vk", external_user_id=str(message.from_id), action="withdrawn", source="vk_bot_command",
+        )
+        await send_message(message.ctx_api, message.peer_id, "Согласие отозвано. Новые операции с персональными данными остановлены.", personal_data_consent_keyboard())
+
     @bot.on.message(FuncRule(is_start_message))
     async def start_handler(message: Message):
         await handle_start(message, api_holder)

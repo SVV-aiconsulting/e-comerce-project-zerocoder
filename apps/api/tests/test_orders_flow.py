@@ -5,6 +5,8 @@ import pytest
 from rest_framework.test import APIClient
 
 from apps.common.enums import Channel, PaymentMethod, ReceivingType
+from apps.privacy.models import ConsentMethod, ConsentStatus, IdentityType
+from apps.privacy.services import ConsentService
 
 
 @pytest.mark.django_db
@@ -12,6 +14,14 @@ def test_full_storefront_flow(settings, product, delivery_rule):
     settings.ADAPTER_API_TOKENS = ["test-token"]
     client = APIClient()
     client.credentials(HTTP_X_ADAPTER_TOKEN="test-token")
+    ConsentService.record(
+        channel=Channel.TELEGRAM,
+        identity_type=IdentityType.TELEGRAM_USER_ID,
+        identity_value="e2e-user",
+        source="api_test",
+        status=ConsentStatus.GRANTED,
+        expression_method=ConsentMethod.BOT_BUTTON,
+    )
 
     identify_response = client.post(
         "/api/identify-customer/",

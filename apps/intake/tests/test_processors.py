@@ -116,6 +116,8 @@ def test_assistant_full_dialog_delivery_confirmation_and_yookassa_link(
     settings.AI_ORDER_PROCESSING_ENABLED = True
     settings.YANDEX_DELIVERY_ENABLED = True
     settings.YOOKASSA_ENABLED = True
+    customer.email = "receipt@example.test"
+    customer.save(update_fields=["email", "updated_at"])
 
     def structured(*, receiving=None, address=None, payment=None, confirmation="none"):
         return OrderExtraction.model_validate_json(

@@ -14,6 +14,7 @@ from bot.keyboards.reply import main_menu_keyboard
 from bot.services.identify import identify_without_phone
 from bot.services.session import SESSION_KEY, apply_identify_response, get_session, is_identified, save_session
 from bot.constants import AI_ASSISTANT_WELCOME
+from bot.handlers.privacy import ensure_consent
 
 logger = logging.getLogger(__name__)
 router = Router(name="start")
@@ -21,6 +22,8 @@ router = Router(name="start")
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, api: StorefrontApiClient) -> None:
+    if not await ensure_consent(message, api):
+        return
     user_ctx = message.from_user
     external_user_id = str(user_ctx.id)
     was_identified = is_identified(await get_session(state, external_user_id))

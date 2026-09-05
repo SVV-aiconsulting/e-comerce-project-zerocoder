@@ -13,6 +13,7 @@ from bot.handlers import (
     checkout,
     menu,
     orders,
+    privacy,
     product,
     registration,
     start,
@@ -29,6 +30,7 @@ def create_dispatcher(settings: Settings, api_client: StorefrontApiClient) -> Di
     dp.update.middleware(PrivateChatMiddleware())
     dp.update.middleware(ApiClientMiddleware(api_client, settings))
 
+    dp.include_router(privacy.router)
     dp.include_router(start.router)
     dp.include_router(registration.router)
     dp.include_router(menu.router)

@@ -31,6 +31,8 @@ from apps.intake.enums import ACTIVE_DRAFT_STATUSES, InboundEventKind
 from apps.intake.models import InboundEvent, OrderDraft
 from apps.intake.responses import InboundEventResponseService
 from apps.intake.services import InboundEventService
+from apps.privacy.models import ConsentMethod, ConsentStatus, IdentityType
+from apps.privacy.services import ConsentService
 
 SESSION_USER_KEY = "website_external_user_id"
 SESSION_CUSTOMER_KEY = "website_customer_id"
@@ -213,11 +215,16 @@ def identify_from_payload(request, payload: dict):
         email = normalize_email(email)
     if not phone and not email:
         raise ValueError("Укажите телефон или email для связи.")
+    session_id = get_or_create_website_user_id(request)
+    if not payload.get("personal_data_consent") and not ConsentService.has_current_consent(channel=Channel.WEBSITE, identity_value=session_id):
+        raise ValueError("Нужно дать согласие на обработку персональных данных.")
+    if payload.get("personal_data_consent") and not ConsentService.has_current_consent(channel=Channel.WEBSITE, identity_value=session_id):
+        ConsentService.record(channel=Channel.WEBSITE, identity_type=IdentityType.WEBSITE_SESSION_ID, identity_value=session_id, source="website_checkout", status=ConsentStatus.GRANTED, expression_method=ConsentMethod.WEBSITE_CHECKBOX, evidence={"csrf_protected": True})
     identity = CustomerService.resolve_website_customer(
         name=name or "Покупатель",
         phone=phone,
         email=email,
-        external_user_id=get_or_create_website_user_id(request),
+        external_user_id=session_id,
     )
     customer = identity.customer
     if customer is None:
@@ -443,10 +450,16 @@ class WebsiteAssistantMessageView(WebsiteApiView):
             email = draft.contact_email
 
         if phone or email or name:
-            if not payload.get("personal_data_consent"):
+            consent_is_current = ConsentService.has_current_consent(
+                channel=Channel.WEBSITE,
+                identity_value=external_user_id,
+            )
+            if not payload.get("personal_data_consent") and not consent_is_current:
                 return json_error(
                     "Отметьте согласие на обработку данных, чтобы передать контакты для заказа."
                 )
+            if payload.get("personal_data_consent") and not consent_is_current:
+                ConsentService.record(channel=Channel.WEBSITE, identity_type=IdentityType.WEBSITE_SESSION_ID, identity_value=external_user_id, source="website_ai_assistant", status=ConsentStatus.GRANTED, expression_method=ConsentMethod.WEBSITE_CHECKBOX, evidence={"csrf_protected": True})
         # Email нужен для чека, но не может быть website-идентификатором AI
         # заказа. Это исключает подмену клиента из старой session/cookie.
         if name and phone:

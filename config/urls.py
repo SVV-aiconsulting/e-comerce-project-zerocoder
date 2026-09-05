@@ -18,9 +18,17 @@ from apps.intake.storefront import (
 from apps.intake.web_views import NaturalOrderStatusView, NaturalOrderView
 from apps.payments.web_views import PaymentReturnView
 from apps.dashboard.views import manager_dashboard
+from apps.privacy.models import PersonalDataDocumentType
+from apps.privacy.views import WebsiteConsentView, WebsiteWithdrawalView, document_view
 
 urlpatterns = [
     path("", NaturalOrderView.as_view(), name="natural-order"),
+    path("privacy-policy/", lambda request: document_view(request, PersonalDataDocumentType.POLICY), name="privacy-policy"),
+    path("privacy-policy/v/<str:version>/", lambda request, version: document_view(request, PersonalDataDocumentType.POLICY, version), name="privacy-policy-version"),
+    path("personal-data-consent/", lambda request: document_view(request, PersonalDataDocumentType.CONSENT), name="personal-data-consent"),
+    path("personal-data-consent/v/<str:version>/", lambda request, version: document_view(request, PersonalDataDocumentType.CONSENT, version), name="personal-data-consent-version"),
+    path("personal-data-consent/actions/", WebsiteConsentView.as_view(), name="website-consent"),
+    path("personal-data-withdrawal/", WebsiteWithdrawalView.as_view(), name="website-withdrawal"),
     path("store/cart/", WebsiteCartView.as_view(), name="website-cart"),
     path(
         "store/cart/items/<int:product_id>/",

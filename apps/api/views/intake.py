@@ -14,6 +14,7 @@ from apps.customers.services import CustomerService
 from apps.intake.models import InboundEvent
 from apps.intake.responses import InboundEventResponseService
 from apps.intake.services import InboundEventService
+from apps.privacy.services import ConsentService
 
 
 class InboundEventView(APIView):
@@ -24,6 +25,13 @@ class InboundEventView(APIView):
         serializer = InboundEventRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         payload = dict(serializer.validated_data)
+        if payload["channel"] in {"telegram", "vk", "max"} and not ConsentService.has_current_consent(
+            channel=payload["channel"], identity_value=payload["external_user_id"]
+        ):
+            return Response(
+                {"error": {"code": "consent_required", "message": "Сначала подтвердите согласие на обработку персональных данных."}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         customer_id = payload.pop("customer_id", None)
 
         if customer_id is not None:

@@ -9,6 +9,7 @@ from apps.api.views.intake import InboundEventDetailView, InboundEventView
 from apps.api.views.meta import MetaView
 from apps.api.views.orders import CreateOrderView, CustomerOrdersView, OrderDetailView
 from apps.api.views.payments import CreatePaymentView, YooKassaWebhookView
+from apps.api.views.privacy import ConsentStatusView
 
 urlpatterns = [
     path("health/", HealthCheckView.as_view(), name="health-check"),
@@ -16,6 +17,7 @@ urlpatterns = [
     path("products/", ProductListView.as_view(), name="product-list"),
     path("products/<str:public_code>/", ProductDetailView.as_view(), name="product-detail"),
     path("identify-customer/", IdentifyCustomerView.as_view(), name="identify-customer"),
+    path("privacy/consent/", ConsentStatusView.as_view(), name="privacy-consent"),
     path("intake/events/", InboundEventView.as_view(), name="intake-event"),
     path(
         "intake/events/<uuid:event_id>/",

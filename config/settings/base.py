@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     "apps.common.apps.CommonConfig",
     "apps.catalog.apps.CatalogConfig",
     "apps.customers.apps.CustomersConfig",
+    "apps.privacy.apps.PrivacyConfig",
     "apps.carts.apps.CartsConfig",
     "apps.delivery.apps.DeliveryConfig",
     "apps.payments.apps.PaymentsConfig",
@@ -146,6 +147,7 @@ REST_FRAMEWORK = {
 
 ADAPTER_API_TOKENS = env.list("ADAPTER_API_TOKENS", default=[])
 ADAPTER_API_PUBLIC_CATALOG = env("ADAPTER_API_PUBLIC_CATALOG")
+PUBLIC_SITE_URL = env("PUBLIC_SITE_URL", default="")
 
 # Яндекс Почта: IMAP/SMTP email-адаптер. Пароль приложения хранится только в env.
 EMAIL_CHANNEL_ENABLED = env("EMAIL_CHANNEL_ENABLED")

@@ -1,6 +1,13 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 
+def personal_data_consent_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Согласен", callback_data="privacy:granted")],
+        [InlineKeyboardButton(text="Не согласен", callback_data="privacy:declined")],
+    ])
+
+
 def product_keyboard(product_id: int, quantity_label: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[

@@ -63,3 +63,15 @@ def test_cart_footer_keyboard_has_no_menu_button():
     assert "В меню" not in labels
     assert "Оформить заказ" in labels
     assert "Очистить корзину" in labels
+
+
+def test_privacy_consent_uses_explicit_callback_buttons():
+    import json
+
+    from vk_bot.keyboards import personal_data_consent_keyboard
+
+    data = json.loads(personal_data_consent_keyboard().get_json())
+    actions = [button["action"] for button in data["buttons"][0]]
+    assert [action["label"] for action in actions] == ["Согласен", "Не согласен"]
+    assert [action["payload"]["action"] for action in actions] == ["granted", "declined"]
+    assert all(action["type"] == "callback" for action in actions)

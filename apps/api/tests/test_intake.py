@@ -6,6 +6,8 @@ from apps.intake.enums import InboundEventStatus, OrderDraftStatus
 from apps.intake.models import Clarification
 from apps.intake.models import InboundEvent
 from apps.intake.services import InboundEventService
+from apps.privacy.models import ConsentMethod, ConsentStatus, IdentityType
+from apps.privacy.services import ConsentService
 
 
 @pytest.fixture
@@ -14,6 +16,14 @@ def api_client(settings, monkeypatch):
     monkeypatch.setattr(InboundEventService, "publish", lambda _event_id: True)
     client = APIClient()
     client.credentials(HTTP_X_ADAPTER_TOKEN="test-token")
+    ConsentService.record(
+        channel=Channel.TELEGRAM,
+        identity_type=IdentityType.TELEGRAM_USER_ID,
+        identity_value="12345",
+        source="api_test",
+        status=ConsentStatus.GRANTED,
+        expression_method=ConsentMethod.BOT_BUTTON,
+    )
     return client
 
 
@@ -62,6 +72,14 @@ def test_intake_endpoint_rejects_customer_context_mismatch(
     api_client,
     customer,
 ):
+    ConsentService.record(
+        channel=Channel.TELEGRAM,
+        identity_type=IdentityType.TELEGRAM_USER_ID,
+        identity_value="another-user",
+        source="api_test",
+        status=ConsentStatus.GRANTED,
+        expression_method=ConsentMethod.BOT_BUTTON,
+    )
     response = api_client.post(
         "/api/intake/events/",
         payload(external_user_id="another-user", customer_id=customer.pk),

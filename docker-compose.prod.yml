@@ -64,6 +64,7 @@ services:
           memory: 768M
     environment:
       CELERY_BROKER_URL: redis://redis:6379/0
+      PUBLIC_SITE_URL: https://webmarket.apernova.ru
     volumes:
       - media_data:/app/media
       # Django читает .env с диска (внутри контейнера ожидается /app/.env).

@@ -18,6 +18,13 @@ def empty_keyboard() -> Keyboard:
     return Keyboard(one_time=False, inline=False)
 
 
+def personal_data_consent_keyboard() -> Keyboard:
+    keyboard = Keyboard(inline=True)
+    keyboard.add(Callback("Согласен", payload={"cmd": "privacy", "action": "granted"}), KeyboardButtonColor.POSITIVE)
+    keyboard.add(Callback("Не согласен", payload={"cmd": "privacy", "action": "declined"}), KeyboardButtonColor.NEGATIVE)
+    return keyboard
+
+
 def product_card_keyboard(product_id: int, quantity_label: str) -> Keyboard:
     keyboard = Keyboard(inline=True)
     keyboard.add(Callback("−", payload={"cmd": "prod_dec", "id": product_id}))

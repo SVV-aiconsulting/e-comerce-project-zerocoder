@@ -145,7 +145,7 @@
         <div class="consent">
           <label>
             <input type="checkbox" name="personal_data_consent" required>
-            Я согласен на обработку данных для оформления заказа
+            Я даю согласие на обработку персональных данных для оформления заказа. <a href="{% url 'privacy-policy' %}" target="_blank">Политика</a> и <a href="{% url 'personal-data-consent' %}" target="_blank">Согласие</a>
           </label>
         </div>
         <p class="form-error" data-checkout-error hidden></p>
@@ -182,7 +182,7 @@
     <textarea id="assistant-message" class="field-textarea" name="message" rows="3" maxlength="20000" placeholder="Например: хочу рыбу на ужин, помогите выбрать"></textarea>
     <label class="assistant-consent">
       <input type="checkbox" name="personal_data_consent">
-      Согласен на обработку данных, если сообщаю имя, телефон или email
+      Я даю согласие на обработку персональных данных. <a href="{% url 'privacy-policy' %}" target="_blank">Политика</a> и <a href="{% url 'personal-data-consent' %}" target="_blank">Согласие</a>
     </label>
     <p class="form-error" data-assistant-error hidden></p>
     <button class="btn btn-primary form-submit" type="submit" data-assistant-submit>Отправить</button>

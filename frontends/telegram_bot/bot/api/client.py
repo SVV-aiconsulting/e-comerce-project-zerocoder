@@ -117,6 +117,18 @@ class StorefrontApiClient:
 
         return self._parse_json_response(response)
 
+    async def get_personal_data_consent(self, *, channel: str, external_user_id: str) -> dict:
+        return await self._request(
+            "GET", "/api/privacy/consent/",
+            params={"channel": channel, "external_user_id": external_user_id},
+        )
+
+    async def record_personal_data_consent(self, *, channel: str, external_user_id: str, action: str, source: str) -> dict:
+        return await self._request(
+            "POST", "/api/privacy/consent/",
+            json={"channel": channel, "external_user_id": external_user_id, "action": action, "source": source},
+        )
+
     async def submit_inbound_event(self, payload: dict) -> dict:
         return await self._request("POST", "/api/intake/events/", json=payload)
 
