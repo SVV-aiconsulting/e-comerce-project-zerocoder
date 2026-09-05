@@ -634,6 +634,14 @@ class AssistantToolExecutor:
     def _tool_preview_order(self, _args: EmptyArgs) -> dict:
         draft = self._refresh_state(self._draft())
         if draft.missing_fields:
+            # После имени, телефона и адреса можно рассчитать доставку до
+            # выбора оплаты. Способ "already_paid" нужен Яндексу только для
+            # тарифа и не сохраняется как выбор пользователя.
+            if (
+                draft.receiving_type == ReceivingType.DELIVERY
+                and set(draft.missing_fields) == {"payment_method"}
+            ):
+                return self._preliminary_delivery_preview(draft)
             return {
                 "ok": False,
                 "error": {
@@ -707,6 +715,51 @@ class AssistantToolExecutor:
         result["requires_explicit_confirmation"] = True
         return result
 
+    def _preliminary_delivery_preview(self, draft) -> dict:
+        OrderDraft.objects.filter(pk=draft.pk).update(
+            payment_method=PaymentMethod.CARD_PREPAYMENT
+        )
+        try:
+            previewed = DraftPricingService.preview(draft)
+        finally:
+            OrderDraft.objects.filter(pk=draft.pk).update(payment_method="")
+
+        previewed.refresh_from_db()
+        if previewed.status != OrderDraftStatus.AWAITING_CONFIRMATION:
+            failed_quote = (
+                previewed.delivery_quotes.filter(status=DeliveryQuoteStatus.FAILED)
+                .order_by("-created_at", "-id")
+                .first()
+            )
+            return {
+                "ok": False,
+                "error": {
+                    "code": (failed_quote.error_code if failed_quote else "delivery_quote_failed"),
+                    "message": "Не удалось рассчитать доставку. Проверьте адрес и повторите расчёт позже.",
+                },
+                "cart": self._cart_payload(self._refresh_state(previewed)),
+            }
+
+        OrderDraft.objects.filter(pk=previewed.pk).update(
+            status=OrderDraftStatus.NEEDS_CLARIFICATION,
+            missing_fields=["payment_method"],
+            previewed_revision=None,
+            confirmed_revision=None,
+        )
+        previewed.refresh_from_db()
+        result = self._cart_payload(previewed)
+        result["preliminary_delivery_quote"] = {
+            "delivery_cost": str(previewed.delivery_cost),
+            "delivery_days": (
+                previewed.delivery_quotes.filter(status=DeliveryQuoteStatus.SUCCEEDED)
+                .order_by("-created_at")
+                .values_list("delivery_days", flat=True)
+                .first()
+            ),
+            "total_amount": str(previewed.total_amount),
+        }
+        return result
+
     @staticmethod
     def _missing_fields_message(missing_fields) -> str:
         missing = set(missing_fields or [])
@@ -716,16 +769,16 @@ class AssistantToolExecutor:
             return "Выберите способ получения: доставка или самовывоз."
         if "delivery_address" in missing:
             return "Укажите адрес доставки."
-        if "payment_method" in missing:
-            return "Выберите способ оплаты: наличными при получении или картой онлайн."
         if "customer" in missing:
             return (
-                "Для оформления заказа укажите имя и контактный телефон "
+                "Для расчёта доставки укажите имя и контактный телефон "
                 "получателя в одном сообщении, например: «Меня зовут Анна, "
                 "+79991234567»."
             )
         if "contact_phone" in missing:
             return "Укажите контактный телефон для доставки."
+        if "payment_method" in missing:
+            return "Выберите способ оплаты: наличными при получении или картой онлайн."
         if "delivery_quote" in missing:
             return (
                 "Не удалось рассчитать доставку. Измените адрес, выберите "

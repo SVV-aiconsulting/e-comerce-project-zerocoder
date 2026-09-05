@@ -142,9 +142,19 @@ def contacts_from_message(message: str) -> tuple[str, str]:
 def contact_name_from_message(message: str) -> str:
     """Вернуть имя, только если клиент назвал его явно в AI-диалоге."""
     match = NAME_IN_TEXT_RE.search(message)
-    if match is None:
+    if match is not None:
+        return match.group(1).strip().title()
+
+    # После прямого вопроса ассистента естественный короткий ответ выглядит
+    # как «Алексей, 89114564343». Принимаем только одно слово до уже
+    # распознанного номера, не пытаясь угадать имя из произвольной фразы.
+    phone_match = PHONE_IN_TEXT_RE.search(message)
+    if phone_match is None:
         return ""
-    return match.group(1).strip().title()
+    candidate = message[: phone_match.start()].strip(" \t,;:-")
+    if re.fullmatch(r"[А-ЯЁA-Z][а-яёa-z-]{1,63}", candidate, re.IGNORECASE):
+        return candidate.title()
+    return ""
 
 
 def active_assistant_draft(*, external_user_id: str, conversation_key: str):
