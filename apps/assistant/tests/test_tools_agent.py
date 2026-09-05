@@ -121,6 +121,15 @@ def test_cart_mutation_requires_quantity_in_customer_message(text, expected):
     assert AssistantToolExecutor._message_has_quantity(text) is expected
 
 
+def test_product_word_typo_matches_only_close_catalog_word():
+    assert AssistantToolExecutor._variant_is_mentioned(
+        "Какой состав дигустационного набора?", "Дегустационный набор"
+    )
+    assert not AssistantToolExecutor._variant_is_mentioned(
+        "Какая есть икра?", "Краб камчатский"
+    )
+
+
 def test_full_catalog_response_contains_price_unit_and_minimum():
     content = OrderAssistantService._render_catalog(
         {
@@ -551,12 +560,14 @@ def test_preview_surfaces_yandex_no_delivery_options(
     draft.delivery_address = "Москва, Тестовая улица, 1"
     draft.payment_method = PaymentMethod.CARD_PREPAYMENT
     draft.contact_phone = customer.phone
+    draft.contact_email = "buyer@example.com"
     draft.save(
         update_fields=[
             "receiving_type",
             "delivery_address",
             "payment_method",
             "contact_phone",
+            "contact_email",
             "updated_at",
         ]
     )
@@ -616,12 +627,14 @@ def test_preview_distinguishes_yandex_test_http_500(
     draft.delivery_address = "Москва, Тестовая улица, 1"
     draft.payment_method = PaymentMethod.CARD_PREPAYMENT
     draft.contact_phone = customer.phone
+    draft.contact_email = "buyer@example.com"
     draft.save(
         update_fields=[
             "receiving_type",
             "delivery_address",
             "payment_method",
             "contact_phone",
+            "contact_email",
             "updated_at",
         ]
     )
@@ -663,6 +676,40 @@ def test_preview_distinguishes_yandex_test_http_500(
     assert result["ok"] is False
     assert "временно недоступен" in result["error"]["message"]
     assert "не предложила вариант" not in result["error"]["message"]
+
+
+@pytest.mark.django_db
+def test_card_prepayment_requires_receipt_email_before_preview(customer, product, settings):
+    settings.YANDEX_DELIVERY_ENABLED = False
+    conversation = "card-receipt-email-dialog"
+    draft = seed_active_draft_with_product(customer, product, conversation)
+    draft.receiving_type = ReceivingType.PICKUP
+    draft.payment_method = PaymentMethod.CARD_PREPAYMENT
+    draft.save(update_fields=["receiving_type", "payment_method", "updated_at"])
+    AssistantToolExecutor._refresh_state(draft)
+    event = InboundEventService.register(
+        channel=Channel.WEBSITE,
+        external_event_id="card-receipt-email",
+        external_user_id="web:receipt-email",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="buyer@example.com",
+        raw_payload={"contact_email": "buyer@example.com"},
+    ).event
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    without_email = backend.execute("preview_order", {}, 1)
+    assert without_email["ok"] is False
+    assert "email" in without_email["error"]["message"]
+
+    action = backend.checkout_action()
+    assert action == ("configure_checkout", {"contact_email": "buyer@example.com"})
+    configured = backend.execute(*action, call_index=2)
+    assert configured["missing_fields"] == []
+    preview = backend.execute("preview_order", {}, 3)
+    assert preview["ok"] is True
+    assert preview["requires_explicit_confirmation"] is True
 
 
 @pytest.mark.django_db

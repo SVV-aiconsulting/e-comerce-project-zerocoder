@@ -37,7 +37,9 @@ SESSION_CUSTOMER_KEY = "website_customer_id"
 SESSION_ASSISTANT_CONVERSATION_KEY = "website_assistant_conversation_id"
 SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY = "website_assistant_identity_conversation_id"
 ASSISTANT_MESSAGE_MAX_LENGTH = 20_000
-PHONE_IN_TEXT_RE = re.compile(r"(?<!\d)(?:\+7|7|8)[\s().-]*\d(?:[\s().-]*\d){9}(?!\d)")
+PHONE_IN_TEXT_RE = re.compile(
+    r"(?<!\d)(?:(?:\+7|7|8)[\s().-]*\d(?:[\s().-]*\d){9}|9(?:[\s().-]*\d){9})(?!\d)"
+)
 EMAIL_IN_TEXT_RE = re.compile(
     r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.+-])"
 )
@@ -145,15 +147,27 @@ def contact_name_from_message(message: str) -> str:
     if match is not None:
         return match.group(1).strip().title()
 
-    # После прямого вопроса ассистента естественный короткий ответ выглядит
-    # как «Алексей, 89114564343». Принимаем только одно слово до уже
-    # распознанного номера, не пытаясь угадать имя из произвольной фразы.
+    # После прямого вопроса ассистента естественный ответ часто выглядит как
+    # «Алексей, 89114564343» или «Я Алексей Петров, мой номер 9113454545».
+    # Берём имя только из короткого фрагмента непосредственно перед номером:
+    # это исключает угадывание имени из произвольного сообщения.
     phone_match = PHONE_IN_TEXT_RE.search(message)
     if phone_match is None:
         return ""
     candidate = message[: phone_match.start()].strip(" \t,;:-")
-    if re.fullmatch(r"[А-ЯЁA-Z][а-яёa-z-]{1,63}", candidate, re.IGNORECASE):
-        return candidate.title()
+    candidate = re.sub(
+        r"^(?:(?:меня\s+)?зовут|(?:мо[её]\s+)?имя|я)\s*[:,-]?\s*",
+        "",
+        candidate,
+        flags=re.IGNORECASE,
+    )
+    candidate = re.sub(r"(?:,?\s*(?:мой\s+)?номер\s*)$", "", candidate, flags=re.IGNORECASE)
+    if re.fullmatch(
+        r"[А-ЯЁA-Z][а-яёa-z-]{1,63}(?:\s+[А-ЯЁA-Z][а-яёa-z-]{1,63}){0,2}",
+        candidate,
+        re.IGNORECASE,
+    ):
+        return " ".join(part.title() for part in candidate.split())
     return ""
 
 
