@@ -159,6 +159,40 @@ class OrderAssistantService:
                     output_tokens,
                 )
                 return OrderDraft.objects.get(pk=draft.pk)
+            # В website личность создаётся отдельным сообщением с именем и
+            # телефоном. Контакты привязывает intake до запуска ассистента,
+            # поэтому нужен один серверный refresh и расчёт без лишнего «да».
+            # Это не действует на историю/старые сессии: только новое событие,
+            # уже связанное с CRM-клиентом, может завершить checkout-preview.
+            if event.channel == "website" and event.customer_id:
+                refreshed = backend._refresh_state(backend._draft())
+                if (
+                    refreshed.status == OrderDraftStatus.READY_FOR_PREVIEW
+                    or (
+                        refreshed.receiving_type == "delivery"
+                        and set(refreshed.missing_fields) == {"payment_method"}
+                    )
+                ):
+                    result = backend.execute("preview_order", {}, 1)
+                    content, response_type, action_url = cls._render_tool_response(
+                        "preview_order", result, ""
+                    )
+                    cls._save_response(
+                        event,
+                        content,
+                        response_type=response_type,
+                        action_url=action_url,
+                    )
+                    cls._finish_turn(
+                        turn,
+                        AssistantTurnStatus.SUCCEEDED,
+                        started,
+                        model_calls,
+                        1,
+                        input_tokens,
+                        output_tokens,
+                    )
+                    return OrderDraft.objects.get(pk=draft.pk)
             catalog = backend.catalog_action()
             if catalog is not None:
                 tool_name, arguments = catalog
@@ -420,6 +454,8 @@ class OrderAssistantService:
                 message = f"{cls._render_cart(cart)}\n\n{message}"
             return message, "tool_error", ""
         if tool_name == "preview_order":
+            if result.get("preliminary_delivery_quote"):
+                return cls._render_preliminary_delivery_quote(result), "delivery_quote", ""
             return cls._render_preview(result), "order_preview", ""
         if tool_name == "search_products":
             return cls._render_catalog(result), "catalog", ""
@@ -521,6 +557,25 @@ class OrderAssistantService:
             lines.append(f"Способ оплаты: {result['payment_method']}")
         if result.get("total_amount") is not None:
             lines.append(f"Итого последнего расчёта: {OrderAssistantService._money(result['total_amount'])} ₽")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _render_preliminary_delivery_quote(result) -> str:
+        quote = result["preliminary_delivery_quote"]
+        lines = ["Параметры доставки:"]
+        lines.append(f"Адрес: {result.get('delivery_address')}")
+        lines.append(
+            f"Стоимость доставки: {OrderAssistantService._money(quote['delivery_cost'])} ₽"
+        )
+        if quote.get("delivery_days") is not None:
+            lines.append(f"Ориентировочный срок: {quote['delivery_days']} дн.")
+        lines.extend(
+            [
+                f"Итого с доставкой: {OrderAssistantService._money(quote['total_amount'])} ₽",
+                "",
+                "Выберите способ оплаты: наличными при получении или картой онлайн.",
+            ]
+        )
         return "\n".join(lines)
 
     @staticmethod

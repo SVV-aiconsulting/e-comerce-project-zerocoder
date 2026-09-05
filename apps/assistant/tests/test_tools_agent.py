@@ -30,6 +30,7 @@ from apps.intake.enums import (
     AssistantToolCallStatus,
     InboundEventStatus,
     ItemMatchStatus,
+    OrderDraftStatus,
     ResolutionSource,
 )
 from apps.intake.models import AssistantMessage, AssistantToolCall, AssistantTurn, OrderDraftItem
@@ -498,6 +499,45 @@ def test_short_yes_previews_complete_draft_without_cart_mutation(
     assert response["message"].lower().count("подтверд") == 1
     assert draft.items.get().requested_quantity == product.min_quantity
     assert provider.calls == []
+
+
+@pytest.mark.django_db
+def test_delivery_quote_is_shown_before_payment_selection(customer, product, settings):
+    settings.YANDEX_DELIVERY_ENABLED = False
+    conversation = "website-delivery-before-payment"
+    draft = seed_active_draft_with_product(customer, product, conversation)
+    draft.receiving_type = ReceivingType.DELIVERY
+    draft.delivery_address = "Москва, Тверская улица, 1"
+    draft.contact_phone = customer.phone
+    draft.save(
+        update_fields=["receiving_type", "delivery_address", "contact_phone", "updated_at"]
+    )
+    AssistantToolExecutor._refresh_state(draft)
+    event = InboundEventService.register(
+        channel=Channel.WEBSITE,
+        external_event_id="website-delivery-before-payment",
+        external_user_id="web:test",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Меня зовут Алексей, 89114564343",
+    ).event
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+
+    result = AssistantToolExecutor(event=event, draft=draft, turn=turn).execute(
+        "preview_order", {}, 1
+    )
+
+    assert result["ok"] is True
+    assert result["preliminary_delivery_quote"]["delivery_cost"] == "0.00"
+    draft.refresh_from_db()
+    assert draft.payment_method == ""
+    assert draft.status == OrderDraftStatus.NEEDS_CLARIFICATION
+    assert draft.missing_fields == ["payment_method"]
+    content, response_type, _ = OrderAssistantService._render_tool_response(
+        "preview_order", result, ""
+    )
+    assert response_type == "delivery_quote"
+    assert "Выберите способ оплаты" in content
 
 
 @pytest.mark.django_db
