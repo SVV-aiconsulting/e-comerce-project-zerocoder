@@ -155,6 +155,7 @@ def test_website_identity_request_is_a_separate_natural_language_step():
     message = AssistantToolExecutor._missing_fields_message(["customer"])
 
     assert message.startswith("Для оформления заказа прошу сообщить Ваше имя")
+    assert message.endswith("9XXXXXXXXX.")
     assert "одном сообщении" not in message
 
 
