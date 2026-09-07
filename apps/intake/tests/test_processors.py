@@ -172,14 +172,14 @@ def test_assistant_full_dialog_delivery_confirmation_and_yookassa_link(
             parsed = structured()
         return parsed, None
 
-    def fake_quote(draft):
+    def fake_quote(cart, **kwargs):
         return DeliveryQuote.objects.create(
-            order_draft=draft,
+            cart=cart,
             environment=DeliveryEnvironment.TEST,
             kind=DeliveryQuoteKind.PRELIMINARY,
             status=DeliveryQuoteStatus.SUCCEEDED,
             request_fingerprint="f" * 64,
-            destination_address=draft.delivery_address,
+            destination_address=kwargs["destination_address"],
             amount=Decimal("321.50"),
             currency="RUB",
             delivery_days=2,
@@ -194,7 +194,7 @@ def test_assistant_full_dialog_delivery_confirmation_and_yookassa_link(
         )
 
     monkeypatch.setattr(AIExtractionService, "extract_with_repair", fake_extract)
-    monkeypatch.setattr(YandexDeliveryQuoteService, "quote_draft", fake_quote)
+    monkeypatch.setattr(YandexDeliveryQuoteService, "quote_cart", fake_quote)
     monkeypatch.setattr(PaymentService, "ensure_payment_link", fake_payment)
 
     texts = [

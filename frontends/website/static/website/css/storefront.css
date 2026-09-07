@@ -686,6 +686,12 @@ textarea {
   font-size: 0.79rem;
 }
 
+.assistant-consent__actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .footer-assistant-link {
   border: 0;
   padding: 0;

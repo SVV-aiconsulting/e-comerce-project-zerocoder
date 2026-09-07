@@ -5,6 +5,7 @@ import pytest
 
 from bot.constants import AI_ASSISTANT_WELCOME
 from bot.handlers.start import cmd_start
+from bot.handlers.privacy import consent_callback
 
 
 @pytest.mark.asyncio
@@ -68,3 +69,23 @@ async def test_start_requests_explicit_consent_before_identification(monkeypatch
     assert "personal-data-consent" in text
     markup = message.answer.await_args.kwargs["reply_markup"]
     assert [row[0].text for row in markup.inline_keyboard] == ["Согласен", "Не согласен"]
+
+
+@pytest.mark.asyncio
+async def test_grant_continues_start_without_second_command(monkeypatch):
+    callback = MagicMock()
+    callback.data = "privacy:granted"
+    callback.from_user = SimpleNamespace(id=777)
+    callback.message.answer = AsyncMock()
+    callback.answer = AsyncMock()
+    state = MagicMock()
+    api = AsyncMock()
+    continuation = AsyncMock()
+    monkeypatch.setattr("bot.handlers.start.continue_after_consent", continuation)
+
+    await consent_callback(callback, state, api)
+
+    continuation.assert_awaited_once_with(
+        callback.message, state, api, user_ctx=callback.from_user
+    )
+    assert "/start" not in callback.message.answer.await_args.args[0]

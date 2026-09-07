@@ -24,7 +24,14 @@ router = Router(name="start")
 async def cmd_start(message: Message, state: FSMContext, api: StorefrontApiClient) -> None:
     if not await ensure_consent(message, api):
         return
-    user_ctx = message.from_user
+    await continue_after_consent(message, state, api)
+
+
+async def continue_after_consent(
+    message: Message, state: FSMContext, api: StorefrontApiClient, *, user_ctx=None
+) -> None:
+    """Продолжает /start сразу после явного согласия, без второй команды."""
+    user_ctx = user_ctx or message.from_user
     external_user_id = str(user_ctx.id)
     was_identified = is_identified(await get_session(state, external_user_id))
 

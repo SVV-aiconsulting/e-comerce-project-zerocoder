@@ -81,9 +81,12 @@ class Customer(TimeStampedModel):
         default=False,
         verbose_name="Согласие на обработку ПД",
     )
-    personal_data_consent_link = models.URLField(
+    personal_data_consent_registry_key = models.UUIDField(
+        null=True,
         blank=True,
-        verbose_name="Ссылка на согласие",
+        editable=False,
+        verbose_name="Ключ записи реестра согласий",
+        help_text="UUID актуального события в электронном реестре. Не является ссылкой на файл согласия.",
     )
     phone_verified_at = models.DateTimeField(
         null=True,

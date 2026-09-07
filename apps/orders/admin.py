@@ -43,6 +43,7 @@ class OrderAdmin(admin.ModelAdmin):
         "customer_name_snapshot",
         "customer_phone_snapshot",
         "customer_email_snapshot",
+        "customer_deleted",
         "order_status",
         "payment_status",
         "channel",
@@ -84,6 +85,7 @@ class OrderAdmin(admin.ModelAdmin):
                 "fields": (
                     "public_number",
                     "customer",
+                    "customer_deleted",
                     "customer_code_snapshot",
                     "customer_name_snapshot",
                     "customer_phone_snapshot",

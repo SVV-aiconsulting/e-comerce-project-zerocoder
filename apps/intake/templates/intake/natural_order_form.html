@@ -171,19 +171,23 @@
       <button class="assistant-close" type="button" data-close-assistant aria-label="Закрыть чат">×</button>
     </div>
   </div>
-  <p class="assistant-note">Подбираю товары только из каталога, а цены, доставка и оплата рассчитываются сервером. Перед оформлением консультант попросит имя и номер телефона — отметьте согласие перед их отправкой.</p>
+  <p class="assistant-note">Подбираю товары только из каталога, а цены, доставка и оплата рассчитываются сервером.</p>
   <div class="assistant-messages" data-assistant-messages aria-live="polite">
     <article class="assistant-message assistant-message--assistant">
       Здравствуйте! Напишите, что хотите заказать. Помогу подобрать товары, доставку и оплату. Перед оформлением попрошу имя и номер телефона.
     </article>
   </div>
+  <section class="assistant-consent" data-assistant-consent hidden>
+    <p>Для начала диалога необходимо согласие на обработку персональных данных.</p>
+    <p><a href="{% url 'privacy-policy' %}" target="_blank">Политика</a> · <a href="{% url 'personal-data-consent' %}" target="_blank">Текст согласия</a></p>
+    <div class="assistant-consent__actions">
+      <button class="btn btn-primary" type="button" data-assistant-consent-accept>Согласен</button>
+      <button class="btn btn-ghost" type="button" data-assistant-consent-decline>Не согласен</button>
+    </div>
+  </section>
   <form class="assistant-form" data-assistant-form>
     <label class="visually-hidden" for="assistant-message">Сообщение консультанту</label>
     <textarea id="assistant-message" class="field-textarea" name="message" rows="3" maxlength="20000" placeholder="Например: хочу рыбу на ужин, помогите выбрать"></textarea>
-    <label class="assistant-consent">
-      <input type="checkbox" name="personal_data_consent">
-      Я даю согласие на обработку персональных данных. <a href="{% url 'privacy-policy' %}" target="_blank">Политика</a> и <a href="{% url 'personal-data-consent' %}" target="_blank">Согласие</a>
-    </label>
     <p class="form-error" data-assistant-error hidden></p>
     <button class="btn btn-primary form-submit" type="submit" data-assistant-submit>Отправить</button>
   </form>

@@ -41,6 +41,7 @@ from apps.intake.enums import (
     ResolutionSource,
 )
 from apps.intake.fulfillment import DraftOrderConversionService, DraftPricingService
+from apps.intake.cart_bridge import UnifiedCartBridge
 from apps.intake.models import AssistantMessage, AssistantToolCall, Clarification, OrderDraft, OrderDraftItem
 from apps.intake.services import OrderDraftService
 from apps.orders.models import Order
@@ -297,6 +298,12 @@ class AssistantToolExecutor:
         if re.search(r"\b(?:заказ\w*|корзин\w*)\b", text):
             return None
         products = self._mentioned_products(text)
+        exact_aliases = [
+            alias.alias
+            for product in CatalogService.get_active_products().prefetch_related("aliases")
+            for alias in product.aliases.all()
+            if normalize_product_text(alias.alias) in text
+        ]
         catalog_question = bool(
             re.search(
                 r"\b(?:каталог\w*|ассортимент\w*|продаж\w*|описан\w*|"
@@ -318,7 +325,11 @@ class AssistantToolExecutor:
         )
         if not catalog_question:
             return None
-        if products:
+        if exact_aliases:
+            # Самый конкретный управляемый синоним важнее вложенного общего:
+            # «красная рыба» не должна превращаться в запрос «рыба».
+            query = max(exact_aliases, key=lambda value: len(normalize_product_text(value)))
+        elif products:
             names = {product.name for product in products}
             if len(names) == 1:
                 query = next(iter(names))
@@ -588,7 +599,9 @@ class AssistantToolExecutor:
             item.requested_unit = product.unit
             item.validation_errors = []
             item.save(update_fields=["requested_quantity", "requested_unit", "validation_errors", "updated_at"])
-        return self._cart_payload(self._refresh_state(draft))
+        draft = self._refresh_state(draft)
+        UnifiedCartBridge.draft_to_cart(draft)
+        return self._cart_payload(draft)
 
     @staticmethod
     def _message_has_quantity(text: str) -> bool:
@@ -607,7 +620,9 @@ class AssistantToolExecutor:
         deleted, _ = draft.items.filter(product__public_code=args.product_code).delete()
         if not deleted:
             raise ValueError("Товар отсутствует в корзине")
-        return self._cart_payload(self._refresh_state(draft))
+        draft = self._refresh_state(draft)
+        UnifiedCartBridge.draft_to_cart(draft)
+        return self._cart_payload(draft)
 
     def _tool_configure_checkout(self, args: ConfigureCheckoutArgs) -> dict:
         if all(
@@ -976,6 +991,8 @@ class AssistantToolExecutor:
             intent=OrderIntent.CREATE_ORDER,
             status=OrderDraftStatus.COLLECTING,
         )
+        draft.refresh_from_db()
+        UnifiedCartBridge.draft_to_cart(draft)
         return {
             "ok": True,
             "cleared_items": deleted,
@@ -1122,7 +1139,9 @@ class AssistantToolExecutor:
         draft.delivery_address = order.delivery_address
         draft.payment_method = order.payment_method
         draft.save(update_fields=["receiving_type", "delivery_address", "payment_method", "updated_at"])
-        return {"ok": True, "repeated_order": order.public_number, "cart": self._cart_payload(self._refresh_state(draft)), "requires_new_preview": True}
+        draft = self._refresh_state(draft)
+        UnifiedCartBridge.draft_to_cart(draft)
+        return {"ok": True, "repeated_order": order.public_number, "cart": self._cart_payload(draft), "requires_new_preview": True}
 
     @staticmethod
     def _explicit_confirmation(event) -> bool:

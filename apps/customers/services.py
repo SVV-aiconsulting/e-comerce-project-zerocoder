@@ -37,6 +37,33 @@ class CustomerService:
     """Сервис управления клиентами."""
 
     @staticmethod
+    @transaction.atomic
+    def anonymize_orders_and_delete(*, customer: Customer) -> None:
+        """Удаляет карточку CRM, сохраняя неидентифицирующую историю заказов.
+
+        Операцию намеренно вызывает только сотрудник через административный
+        интерфейс. Отзыв согласия сам по себе лишь ограничивает новые операции:
+        основания хранения уже оформленного заказа проверяет менеджер.
+        """
+        from apps.orders.models import Order
+
+        Order.objects.filter(customer=customer).update(
+            customer=None,
+            customer_deleted=True,
+            customer_code_snapshot="",
+            customer_name_snapshot="Клиент удалён",
+            customer_phone_snapshot="",
+            customer_email_snapshot="",
+            source_external_user_id_snapshot="",
+            delivery_address="",
+            customer_comment="",
+        )
+        CustomerIdentityConflict.objects.filter(
+            Q(source_customer=customer) | Q(matched_customer=customer)
+        ).delete()
+        customer.delete()
+
+    @staticmethod
     def find_by_channel_identity(channel: str, external_user_id: str) -> Customer | None:
         identity = CustomerChannelIdentity.objects.filter(
             channel=channel,

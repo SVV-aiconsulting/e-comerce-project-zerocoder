@@ -1,9 +1,12 @@
+from decimal import Decimal
+
 import pytest
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 
 from apps.common.enums import Channel, CustomerSource
 from apps.common.exceptions import ChannelIdentityAlreadyLinkedError
+from apps.carts.services import CartService
 from apps.customers.models import (
     Customer,
     CustomerChannelIdentity,
@@ -296,3 +299,33 @@ def test_email_phone_conflict_does_not_replace_or_block_customer(customer):
     assert result.is_new_customer is True
     assert result.customer.phone == customer.phone
     assert result.conflicts_created == 1
+
+
+@pytest.mark.django_db
+def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart, product):
+    from apps.common.enums import Channel, PaymentMethod, ReceivingType
+    from apps.orders.services import OrderService
+    from apps.orders.models import Order
+
+    CartService.set_item_quantity(active_cart, product, Decimal("1"))
+
+    order = OrderService.create_order_from_cart(
+        active_cart,
+        customer=customer,
+        channel=Channel.TELEGRAM,
+        receiving_type=ReceivingType.DELIVERY,
+        payment_method=PaymentMethod.CARD_PREPAYMENT,
+        delivery_address="Москва, Тверская, 1",
+        customer_comment="Позвонить перед доставкой",
+    )
+
+    CustomerService.anonymize_orders_and_delete(customer=customer)
+
+    order = Order.objects.get(pk=order.pk)
+    assert order.customer is None
+    assert order.customer_deleted is True
+    assert order.customer_name_snapshot == "Клиент удалён"
+    assert order.customer_phone_snapshot == ""
+    assert order.customer_email_snapshot == ""
+    assert order.delivery_address == ""
+    assert order.items.exists()

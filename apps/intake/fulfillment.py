@@ -16,6 +16,8 @@ from apps.delivery.models import (
 )
 from apps.delivery.quote_service import YandexDeliveryQuoteService
 from apps.delivery.offer_service import YandexDeliveryOfferService
+from apps.delivery.checkout import CheckoutDeliveryService
+from apps.intake.cart_bridge import UnifiedCartBridge
 from apps.intake.enums import OrderDraftStatus
 from apps.intake.exceptions import DraftStateError
 from apps.intake.models import OrderDraft
@@ -35,54 +37,33 @@ class DraftPricingService:
     def preview(draft: OrderDraft) -> OrderDraft:
         draft = OrderDraft.objects.select_related("customer").get(pk=draft.pk)
         OrderDraftService.validate_ready_for_preview(draft)
-        items = [
-            PricingItem(product=item.product, quantity=item.requested_quantity)
-            for item in draft.items.select_related("product").order_by("line_number")
-        ]
-        totals = PricingService.calculate_order_totals(
-            customer=draft.customer,
-            cart_items=items,
-            receiving_type=draft.receiving_type,
+        cart = UnifiedCartBridge.draft_to_cart(draft)
+        previous_quote_id = (
+            cart.delivery_quotes.order_by("-id").values_list("id", flat=True).first()
+            or 0
         )
-        if (
-            settings.YANDEX_DELIVERY_ENABLED
-            and draft.receiving_type == ReceivingType.DELIVERY
-        ):
-            try:
-                quote = YandexDeliveryQuoteService.quote_draft(draft)
-            except DeliveryError:
-                quote = None
-            # В общем тестовом контуре pricing-calculator может отвечать HTTP
-            # 500 при валидном запросе. offers/create использует тот же API,
-            # но возвращает реальные цену и интервал; он не подтверждает
-            # доставку. Fallback строго ограничен test-контуром.
-            if (
-                quote is not None
-                and quote.status != DeliveryQuoteStatus.SUCCEEDED
-                and quote.environment == DeliveryEnvironment.TEST
-                and (
-                    not quote.error_code
-                    or quote.error_code == "no_delivery_options"
-                    or quote.error_code.isdigit()
-                    and int(quote.error_code) >= 500
-                )
-            ):
-                try:
-                    quote = YandexDeliveryOfferService.create_for_draft(draft)
-                except DeliveryError:
-                    quote = None
-            if not quote or quote.status != DeliveryQuoteStatus.SUCCEEDED:
-                draft.status = OrderDraftStatus.NEEDS_CLARIFICATION
-                draft.missing_fields = ["delivery_quote"]
-                draft.save(update_fields=["status", "missing_fields", "updated_at"])
-                return draft
-            delivery_cost = Decimal("0") if totals.free_delivery else quote.amount
-            totals.delivery_cost = delivery_cost
-            totals.total_amount = PricingService.calculate_total(
-                totals.items_total,
-                totals.discount_amount,
-                delivery_cost,
+        try:
+            checkout_preview = CheckoutDeliveryService.preview(
+                cart=cart,
+                customer=draft.customer,
+                receiving_type=draft.receiving_type,
+                delivery_address=draft.delivery_address,
+                payment_method=draft.payment_method,
             )
+        except DeliveryError:
+            quote = cart.delivery_quotes.order_by("-created_at", "-id").first()
+            if quote is not None:
+                quote.order_draft = draft
+                quote.save(update_fields=["order_draft", "updated_at"])
+            draft.status = OrderDraftStatus.NEEDS_CLARIFICATION
+            draft.missing_fields = ["delivery_quote"]
+            draft.save(update_fields=["status", "missing_fields", "updated_at"])
+            return draft
+        totals = checkout_preview.totals
+        cart.delivery_quotes.filter(id__gt=previous_quote_id).update(order_draft=draft)
+        if checkout_preview.quote is not None:
+            checkout_preview.quote.order_draft = draft
+            checkout_preview.quote.save(update_fields=["order_draft", "updated_at"])
         return OrderDraftService.record_preview(
             draft,
             items_total=totals.items_total,

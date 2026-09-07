@@ -31,7 +31,7 @@ from apps.intake.enums import ACTIVE_DRAFT_STATUSES, InboundEventKind
 from apps.intake.models import InboundEvent, OrderDraft
 from apps.intake.responses import InboundEventResponseService
 from apps.intake.services import InboundEventService
-from apps.privacy.models import ConsentMethod, ConsentStatus, IdentityType
+from apps.privacy.models import ConsentMethod, ConsentStatus, IdentityType, PersonalDataConsentEvent
 from apps.privacy.services import ConsentService
 
 SESSION_USER_KEY = "website_external_user_id"
@@ -229,9 +229,16 @@ def identify_from_payload(request, payload: dict):
     customer = identity.customer
     if customer is None:
         raise ValueError("Не удалось идентифицировать клиента.")
-    if payload.get("personal_data_consent") and not customer.personal_data_consent:
+    if ConsentService.has_current_consent(channel=Channel.WEBSITE, identity_value=session_id):
+        consent_event = PersonalDataConsentEvent.objects.filter(
+            channel=Channel.WEBSITE,
+            identity_value=session_id,
+            status=ConsentStatus.GRANTED,
+        ).order_by("-occurred_at", "-id").first()
         customer.personal_data_consent = True
-        customer.save(update_fields=["personal_data_consent", "updated_at"])
+        if consent_event:
+            customer.personal_data_consent_registry_key = consent_event.public_id
+        customer.save(update_fields=["personal_data_consent", "personal_data_consent_registry_key", "updated_at"])
     request.session[SESSION_CUSTOMER_KEY] = customer.pk
     return identity
 
@@ -472,9 +479,15 @@ class WebsiteAssistantMessageView(WebsiteApiView):
             customer = identity.customer
             if customer is None:
                 return json_error("Не удалось идентифицировать клиента.")
-            if not customer.personal_data_consent:
-                customer.personal_data_consent = True
-                customer.save(update_fields=["personal_data_consent", "updated_at"])
+            consent_event = PersonalDataConsentEvent.objects.filter(
+                channel=Channel.WEBSITE,
+                identity_value=external_user_id,
+                status=ConsentStatus.GRANTED,
+            ).order_by("-occurred_at", "-id").first()
+            customer.personal_data_consent = True
+            if consent_event:
+                customer.personal_data_consent_registry_key = consent_event.public_id
+            customer.save(update_fields=["personal_data_consent", "personal_data_consent_registry_key", "updated_at"])
             request.session[SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY] = conversation_key
             request.session.pop(SESSION_ASSISTANT_PENDING_IDENTITY_KEY, None)
             request.session.modified = True

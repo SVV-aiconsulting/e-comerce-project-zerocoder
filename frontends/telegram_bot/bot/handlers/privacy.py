@@ -34,10 +34,18 @@ async def consent_callback(callback: CallbackQuery, state: FSMContext, api) -> N
     )
     await callback.answer()
     if action == "granted":
-        await callback.message.answer("Согласие сохранено. Для продолжения нажмите /start.")
+        from bot.handlers.start import continue_after_consent
+
+        await callback.message.answer("Согласие сохранено.")
+        await continue_after_consent(
+            callback.message, state, api, user_ctx=callback.from_user
+        )
     else:
         await state.clear()
-        await callback.message.answer("Без обработки необходимых данных регистрация и оформление заказа недоступны.")
+        await callback.message.answer(
+            "Без согласия продолжить регистрацию и оформление заказа нельзя. "
+            "Если решите продолжить, снова отправьте /start."
+        )
 
 
 @router.message(Command("privacy_withdraw"))

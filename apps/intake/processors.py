@@ -10,6 +10,7 @@ from apps.customers.validators import normalize_email, normalize_phone
 from apps.intake.enums import InboundEventKind, InboundEventStatus, OrderIntent
 from apps.intake.models import InboundEvent, OrderDraft
 from apps.intake.services import OrderDraftService
+from apps.intake.cart_bridge import UnifiedCartBridge
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,8 @@ class InboundEventProcessor:
         if contact_updates:
             OrderDraft.objects.filter(pk=draft.pk).update(**contact_updates)
             draft.refresh_from_db(fields=list(contact_updates))
+
+        UnifiedCartBridge.cart_to_draft(draft)
 
         InboundEvent.objects.filter(pk=event.pk).update(
             draft_id=draft.pk,

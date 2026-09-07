@@ -241,20 +241,20 @@ def test_ai_preview_uses_yandex_quote_and_conversion_keeps_it(
         match_status=ItemMatchStatus.MATCHED,
     )
 
-    def fake_quote(_draft):
+    def fake_quote(cart, **kwargs):
         return DeliveryQuote.objects.create(
-            order_draft=_draft,
+            cart=cart,
             environment=DeliveryEnvironment.TEST,
             kind=DeliveryQuoteKind.PRELIMINARY,
             status=DeliveryQuoteStatus.SUCCEEDED,
             request_fingerprint="a" * 64,
-            destination_address=_draft.delivery_address,
+            destination_address=kwargs["destination_address"],
             amount=Decimal("123.45"),
             currency="RUB",
             delivery_days=2,
         )
 
-    monkeypatch.setattr(YandexDeliveryQuoteService, "quote_draft", fake_quote)
+    monkeypatch.setattr(YandexDeliveryQuoteService, "quote_cart", fake_quote)
 
     preview = DraftPricingService.preview(draft)
     assert preview.delivery_cost == Decimal("123.45")
@@ -296,34 +296,34 @@ def test_ai_preview_uses_test_offer_only_after_pricing_http_500(
         match_status=ItemMatchStatus.MATCHED,
     )
 
-    def failed_pricing(current_draft):
-        return DeliveryQuote.objects.create(
-            order_draft=current_draft,
+    def failed_pricing(cart, **kwargs):
+        DeliveryQuote.objects.create(
+            cart=cart,
             environment=DeliveryEnvironment.TEST,
             kind=DeliveryQuoteKind.PRELIMINARY,
             status=DeliveryQuoteStatus.FAILED,
             request_fingerprint="p" * 64,
-            destination_address=current_draft.delivery_address,
+            destination_address=kwargs["destination_address"],
             error_code="500",
             error_message="Internal Server Error",
         )
+        return successful_offer(cart, **kwargs)
 
-    def successful_offer(current_draft):
+    def successful_offer(cart, **kwargs):
         return DeliveryQuote.objects.create(
-            order_draft=current_draft,
+            cart=cart,
             environment=DeliveryEnvironment.TEST,
             kind=DeliveryQuoteKind.OFFER,
             status=DeliveryQuoteStatus.SUCCEEDED,
             request_fingerprint="o" * 64,
             external_offer_id="test-offer",
-            destination_address=current_draft.delivery_address,
+            destination_address=kwargs["destination_address"],
             amount=Decimal("321.50"),
             currency="RUB",
             delivery_days=2,
         )
 
-    monkeypatch.setattr(YandexDeliveryQuoteService, "quote_draft", failed_pricing)
-    monkeypatch.setattr(YandexDeliveryOfferService, "create_for_draft", successful_offer)
+    monkeypatch.setattr(YandexDeliveryQuoteService, "quote_cart", failed_pricing)
 
     preview = DraftPricingService.preview(draft)
 

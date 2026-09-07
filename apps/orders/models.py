@@ -28,9 +28,16 @@ class Order(TimeStampedModel):
     )
     customer = models.ForeignKey(
         Customer,
-        on_delete=models.PROTECT,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
         related_name="orders",
         verbose_name="Клиент",
+    )
+    customer_deleted = models.BooleanField(
+        default=False,
+        verbose_name="Клиент удалён",
+        help_text="Карточка клиента удалена, персональные данные в заказе обезличены.",
     )
     customer_code_snapshot = models.CharField(
         max_length=32,

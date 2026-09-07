@@ -443,7 +443,32 @@
   const assistantForm = document.querySelector("[data-assistant-form]");
   const assistantError = document.querySelector("[data-assistant-error]");
   const assistantSubmit = document.querySelector("[data-assistant-submit]");
+  const assistantConsent = document.querySelector("[data-assistant-consent]");
+  const assistantConsentAccept = document.querySelector("[data-assistant-consent-accept]");
+  const assistantConsentDecline = document.querySelector("[data-assistant-consent-decline]");
   let assistantHistoryLoaded = false;
+  let assistantConsentGranted = false;
+
+  function setAssistantConsentState(granted) {
+    assistantConsentGranted = granted;
+    if (assistantConsent) assistantConsent.hidden = granted;
+    if (assistantForm) {
+      assistantForm.hidden = !granted;
+      assistantForm.message.disabled = !granted;
+    }
+  }
+
+  async function refreshAssistantConsent() {
+    const status = await request("/personal-data-consent/actions/");
+    setAssistantConsentState(Boolean(status.granted));
+    if (!status.granted) {
+      assistantMessages.innerHTML = "";
+      appendAssistantMessage(
+        "assistant",
+        "Перед началом диалога ознакомьтесь с Политикой и Согласием и выберите действие ниже."
+      );
+    }
+  }
 
   function renderAssistantGreeting() {
     if (!assistantMessages) return;
@@ -495,14 +520,15 @@
     if (!assistantDialog) return;
     if (!assistantDialog.open) assistantDialog.showModal();
     try {
-      await loadAssistantHistory();
+      await refreshAssistantConsent();
+      if (assistantConsentGranted) await loadAssistantHistory();
     } catch (_error) {
       appendAssistantMessage(
         "assistant",
         "Историю пока не удалось загрузить. Можете начать новый вопрос."
       );
     }
-    assistantForm?.message.focus();
+    if (assistantConsentGranted) assistantForm?.message.focus();
   }
 
   function closeAssistant() {
@@ -548,7 +574,7 @@
   assistantForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const message = assistantForm.message.value.trim();
-    if (!message) return;
+    if (!message || !assistantConsentGranted) return;
     assistantError.hidden = true;
     assistantSubmit.disabled = true;
     appendAssistantMessage("user", message);
@@ -558,7 +584,6 @@
         method: "POST",
         body: JSON.stringify({
           message,
-          personal_data_consent: assistantForm.personal_data_consent.checked,
         }),
       });
       await waitForAssistantEvent(created.event_id);
@@ -570,6 +595,33 @@
       assistantSubmit.disabled = false;
       assistantForm.message.focus();
     }
+  });
+
+  assistantConsentAccept?.addEventListener("click", async () => {
+    try {
+      await request("/personal-data-consent/actions/", {
+        method: "POST",
+        body: JSON.stringify({ accepted: true }),
+      });
+      setAssistantConsentState(true);
+      renderAssistantGreeting();
+      assistantForm?.message.focus();
+    } catch (error) {
+      assistantError.hidden = false;
+      assistantError.textContent = error.message;
+    }
+  });
+
+  assistantConsentDecline?.addEventListener("click", async () => {
+    await request("/personal-data-consent/actions/", {
+      method: "POST",
+      body: JSON.stringify({ accepted: false }),
+    });
+    setAssistantConsentState(false);
+    appendAssistantMessage(
+      "assistant",
+      "Без согласия AI-консультант не может обрабатывать данные для оформления заказа. Вы можете закрыть окно или дать согласие позже."
+    );
   });
 
   assistantDialog?.addEventListener("click", (event) => {

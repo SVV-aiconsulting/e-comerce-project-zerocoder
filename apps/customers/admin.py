@@ -1,5 +1,7 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.urls import reverse
+from django.utils.html import format_html
 from django.utils import timezone
 
 from apps.common.enums import CustomerSource
@@ -11,6 +13,8 @@ from apps.customers.models import (
     IdentityConflictStatus,
 )
 from apps.customers.validators import normalize_email, normalize_phone
+from apps.customers.services import CustomerService
+from apps.privacy.models import ConsentStatus, PersonalDataConsentEvent
 
 
 class CustomerAdminForm(forms.ModelForm):
@@ -101,8 +105,13 @@ class CustomerAdmin(admin.ModelAdmin):
         "last_order_at",
         "created_at",
         "updated_at",
+        "personal_data_consent_registry_key",
+        "consent_date",
+        "consent_registry_link",
+        "consent_registry_extract",
     )
     inlines = [CustomerChannelIdentityInline]
+    actions = ("anonymize_and_delete_customers",)
     list_select_related = ()
     fieldsets = (
         (
@@ -129,7 +138,10 @@ class CustomerAdmin(admin.ModelAdmin):
                 "fields": (
                     "marketing_consent",
                     "personal_data_consent",
-                    "personal_data_consent_link",
+                    "personal_data_consent_registry_key",
+                    "consent_date",
+                    "consent_registry_link",
+                    "consent_registry_extract",
                     "manager_comment",
                 ),
             },
@@ -173,6 +185,50 @@ class CustomerAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         return super().get_queryset(request).prefetch_related("channel_identities")
+
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.action(description="Удалить карточки и обезличить связанные заказы")
+    def anonymize_and_delete_customers(self, request, queryset):
+        customers = list(queryset)
+        for customer in customers:
+            CustomerService.anonymize_orders_and_delete(customer=customer)
+        self.message_user(
+            request,
+            f"Удалено карточек: {len(customers)}. Заказы сохранены и обезличены.",
+            level=messages.WARNING,
+        )
+
+    @admin.display(description="Дата согласия")
+    def consent_date(self, obj):
+        event = self._current_consent_event(obj)
+        return event.occurred_at if event else "—"
+
+    @admin.display(description="Запись реестра")
+    def consent_registry_link(self, obj):
+        event = self._current_consent_event(obj)
+        if not event:
+            return "—"
+        url = reverse("admin:privacy_personaldataconsentevent_change", args=[event.pk])
+        return format_html('<a href="{}">{}</a>', url, event.public_id)
+
+    @admin.display(description="Выписка из реестра")
+    def consent_registry_extract(self, obj):
+        event = self._current_consent_event(obj)
+        if not event:
+            return "—"
+        url = reverse("admin:privacy-consent-registry-extract", args=[event.public_id])
+        return format_html('<a class="button" href="{}" target="_blank">Сформировать выписку</a>', url)
+
+    @staticmethod
+    def _current_consent_event(obj):
+        if obj.personal_data_consent_registry_key:
+            event = PersonalDataConsentEvent.objects.filter(public_id=obj.personal_data_consent_registry_key).first()
+            if event:
+                return event
+        return obj.personal_data_consent_events.filter(status=ConsentStatus.GRANTED).order_by("-occurred_at", "-id").first()
 
 
 @admin.register(CustomerChannelIdentity)

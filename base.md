@@ -57,7 +57,7 @@
 - `status` — `varchar(16)` (choices).
 - `marketing_consent` — `boolean`.
 - `personal_data_consent` — `boolean`.
-- `personal_data_consent_link` — `varchar`/URL, может быть пустым.
+- `personal_data_consent_registry_key` — UUID актуального события электронного реестра, может быть пустым.
 - `phone_verified_at` — `timestamp`, `NULL` (дата подтверждения телефона).
 - `manager_comment` — `text`, может быть пустым.
 

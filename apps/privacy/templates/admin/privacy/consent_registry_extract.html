@@ -1,0 +1,19 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Выписка из электронного реестра согласий{% endblock %}
+{% block content %}
+<h1>Выписка из электронного реестра согласий</h1>
+<p>Запись сформирована из неизменяемого события реестра. Это не отдельный файл согласия и не заменяет исходную запись.</p>
+<table>
+  <tr><th>UUID события</th><td>{{ event.public_id }}</td></tr>
+  <tr><th>Статус</th><td>{{ event.get_status_display }}</td></tr>
+  <tr><th>Дата и время UTC</th><td>{{ event.occurred_at|date:"c" }}</td></tr>
+  <tr><th>Канал и источник</th><td>{{ event.get_channel_display }} / {{ event.source }}</td></tr>
+  <tr><th>Идентификатор</th><td>{{ event.get_identity_type_display }}: {{ event.identity_value }}</td></tr>
+  <tr><th>Способ выражения воли</th><td>{{ event.get_expression_method_display }}</td></tr>
+  <tr><th>Цель</th><td>{{ event.purpose }}</td></tr>
+  <tr><th>Согласие</th><td>Версия {{ event.consent_document.version }}, SHA-256 {{ event.consent_document.content_hash }}</td></tr>
+  <tr><th>Политика</th><td>Версия {{ event.policy_document.version }}, SHA-256 {{ event.policy_document.content_hash }}</td></tr>
+</table>
+<h2>Текст согласия опубликованной версии</h2>
+<pre style="white-space:pre-wrap;font:inherit">{{ event.consent_document.content }}</pre>
+{% endblock %}

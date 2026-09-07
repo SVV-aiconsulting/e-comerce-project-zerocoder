@@ -1,4 +1,5 @@
 import json
+import uuid
 
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -17,15 +18,35 @@ def document_view(request, document_type, version=None):
 
 
 class WebsiteConsentView(View):
+    session_key = "website_external_user_id"
+
+    def _identity(self, request):
+        identity = request.session.get(self.session_key)
+        if not identity:
+            identity = str(uuid.uuid4())
+            request.session[self.session_key] = identity
+        return identity
+
+    def get(self, request):
+        identity = self._identity(request)
+        documents = ConsentService.current_documents()
+        return JsonResponse(
+            {
+                "granted": ConsentService.has_current_consent(
+                    channel=Channel.WEBSITE, identity_value=identity
+                ),
+                "policy_url": documents.policy.public_path,
+                "consent_url": documents.consent.public_path,
+            }
+        )
+
     def post(self, request):
         try:
             payload = request.POST if request.POST else json.loads(request.body or b"{}")
         except (TypeError, ValueError, json.JSONDecodeError):
             return JsonResponse({"error": {"message": "Некорректный формат запроса."}}, status=400)
         accepted = bool(payload.get("accepted"))
-        identity = request.session.get("website_external_user_id")
-        if not identity:
-            return JsonResponse({"error": {"message": "Сессия сайта не найдена."}}, status=400)
+        identity = self._identity(request)
         event = ConsentService.record(
             channel=Channel.WEBSITE,
             identity_type=IdentityType.WEBSITE_SESSION_ID,

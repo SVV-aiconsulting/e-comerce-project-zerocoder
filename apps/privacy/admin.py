@@ -1,4 +1,6 @@
 from django.contrib import admin
+from django.template.response import TemplateResponse
+from django.urls import path
 
 from apps.privacy.models import PersonalDataConsentEvent, PersonalDataDocumentVersion
 
@@ -30,3 +32,22 @@ class PersonalDataConsentEventAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    def get_urls(self):
+        return [
+            path(
+                "extract/<uuid:public_id>/",
+                self.admin_site.admin_view(self.registry_extract),
+                name="privacy-consent-registry-extract",
+            )
+        ] + super().get_urls()
+
+    def registry_extract(self, request, public_id):
+        event = PersonalDataConsentEvent.objects.select_related(
+            "customer", "consent_document", "policy_document", "previous_event"
+        ).get(public_id=public_id)
+        return TemplateResponse(
+            request,
+            "admin/privacy/consent_registry_extract.html",
+            {**self.admin_site.each_context(request), "event": event},
+        )

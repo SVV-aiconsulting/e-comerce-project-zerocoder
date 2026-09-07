@@ -11,6 +11,7 @@ from apps.api.serializers.identify import (
 from apps.common.exceptions import ChannelIdentityAlreadyLinkedError
 from apps.customers.services import CustomerService
 from apps.privacy.services import ConsentService
+from apps.privacy.models import ConsentStatus, PersonalDataConsentEvent
 
 
 class IdentifyCustomerView(APIView):
@@ -74,10 +75,27 @@ class IdentifyCustomerView(APIView):
             "external_user_id": payload["external_user_id"],
         }
         if result.customer:
-            if not result.customer.personal_data_consent:
+            consent_event = PersonalDataConsentEvent.objects.filter(
+                channel=payload["channel"],
+                identity_value=payload["external_user_id"],
+                status=ConsentStatus.GRANTED,
+            ).order_by("-occurred_at", "-id").first()
+            if (
+                not result.customer.personal_data_consent
+                or consent_event
+                and result.customer.personal_data_consent_registry_key
+                != consent_event.public_id
+            ):
                 result.customer.personal_data_consent = True
+                result.customer.personal_data_consent_registry_key = (
+                    consent_event.public_id if consent_event else None
+                )
                 result.customer.save(
-                    update_fields=["personal_data_consent", "updated_at"]
+                    update_fields=[
+                        "personal_data_consent",
+                        "personal_data_consent_registry_key",
+                        "updated_at",
+                    ]
                 )
             response_payload["customer_id"] = result.customer.pk
             response_payload["customer_public_code"] = result.customer.public_code

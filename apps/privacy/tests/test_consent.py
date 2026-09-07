@@ -42,10 +42,10 @@ def test_first_grant_records_versions_urls_and_hashes():
     event = record_consent()
 
     assert event.status == ConsentStatus.GRANTED
-    assert event.consent_document.version == "1.0"
-    assert event.consent_document.public_path == "/personal-data-consent/v/1.0/"
+    assert event.consent_document.version == "1.1"
+    assert event.consent_document.public_path == "/personal-data-consent/v/1.1/"
     assert len(event.consent_document.content_hash) == 64
-    assert event.policy_document.public_path == "/privacy-policy/v/1.0/"
+    assert event.policy_document.public_path == "/privacy-policy/v/1.1/"
     assert len(event.policy_document.content_hash) == 64
     assert ConsentService.has_current_consent(
         channel=Channel.TELEGRAM, identity_value="tg-1"
@@ -119,14 +119,14 @@ def test_new_document_versions_require_fresh_consent_and_preserve_history():
     PersonalDataDocumentVersion.objects.create(
         document_type=PersonalDataDocumentType.POLICY,
         version="2.0",
-        effective_from=date(2026, 9, 5),
+        effective_from=date(2026, 9, 7),
         content="Новая версия политики",
         public_path="/privacy-policy/v/2.0/",
     )
     PersonalDataDocumentVersion.objects.create(
         document_type=PersonalDataDocumentType.CONSENT,
         version="2.0",
-        effective_from=date(2026, 9, 5),
+        effective_from=date(2026, 9, 7),
         content="Новая версия согласия",
         public_path="/personal-data-consent/v/2.0/",
     )
@@ -172,6 +172,20 @@ def test_public_documents_and_website_withdrawal(client):
         identity_value="site-session",
         status=ConsentStatus.WITHDRAWN,
     ).exists()
+
+
+@pytest.mark.django_db
+def test_website_consent_is_an_interactive_session_action(client):
+    initial = client.get("/personal-data-consent/actions/")
+    assert initial.status_code == 200
+    assert initial.json()["granted"] is False
+
+    granted = client.post(
+        "/personal-data-consent/actions/",
+        data={"accepted": True},
+    )
+    assert granted.status_code == 200
+    assert client.get("/personal-data-consent/actions/").json()["granted"] is True
 
 
 @pytest.mark.django_db

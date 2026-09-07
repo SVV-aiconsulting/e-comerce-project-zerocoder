@@ -258,6 +258,44 @@ def test_model_history_keeps_user_context_but_redacts_assistant_facts(
 
 
 @pytest.mark.django_db
+def test_catalog_action_prefers_specific_red_fish_alias(customer, product):
+    from apps.catalog.models import ProductAlias
+
+    ProductAlias.objects.create(product=product, alias="рыба")
+    ProductAlias.objects.create(product=product, alias="красная рыба")
+    white = Product.objects.create(
+        public_code="WHITE-FISH",
+        name="Треска",
+        unit=product.unit,
+        min_quantity=product.min_quantity,
+        base_price=product.base_price,
+        is_active=True,
+    )
+    ProductAlias.objects.create(product=white, alias="рыба")
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="red-fish-catalog",
+        external_user_id="12345",
+        conversation_key="red-fish-dialog",
+        customer=customer,
+        raw_text="Что у вас есть из красной рыбы?",
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    assert backend.catalog_action() == (
+        "search_products",
+        {"query": "красная рыба", "limit": 30},
+    )
+
+
+@pytest.mark.django_db
 def test_product_card_question_is_backend_rendered_with_exact_description(
     customer, product, settings, monkeypatch
 ):
@@ -590,20 +628,20 @@ def test_preview_surfaces_yandex_no_delivery_options(
     ).event
     turn = AssistantTurn.objects.create(event=event, draft=draft)
 
-    def failed_quote(current_draft):
+    def failed_quote(cart, **kwargs):
         return DeliveryQuote.objects.create(
-            order_draft=current_draft,
+            cart=cart,
             environment=DeliveryEnvironment.TEST,
             kind=DeliveryQuoteKind.PRELIMINARY,
             status=DeliveryQuoteStatus.FAILED,
             request_fingerprint="f" * 64,
-            destination_address=current_draft.delivery_address,
+            destination_address=kwargs["destination_address"],
             error_code="no_delivery_options",
             error_message="No delivery options for interval",
         )
 
     monkeypatch.setattr(
-        "apps.intake.fulfillment.YandexDeliveryQuoteService.quote_draft",
+        "apps.delivery.checkout.YandexDeliveryQuoteService.quote_cart",
         failed_quote,
     )
     backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
@@ -657,24 +695,24 @@ def test_preview_distinguishes_yandex_test_http_500(
     ).event
     turn = AssistantTurn.objects.create(event=event, draft=draft)
 
-    def failed_quote(current_draft):
+    def failed_quote(cart, **kwargs):
         return DeliveryQuote.objects.create(
-            order_draft=current_draft,
+            cart=cart,
             environment=DeliveryEnvironment.TEST,
             kind=DeliveryQuoteKind.PRELIMINARY,
             status=DeliveryQuoteStatus.FAILED,
             request_fingerprint="e" * 64,
-            destination_address=current_draft.delivery_address,
+            destination_address=kwargs["destination_address"],
             error_code="500",
             error_message="Internal Server Error",
         )
 
     monkeypatch.setattr(
-        "apps.intake.fulfillment.YandexDeliveryQuoteService.quote_draft",
+        "apps.delivery.checkout.YandexDeliveryQuoteService.quote_cart",
         failed_quote,
     )
     monkeypatch.setattr(
-        "apps.intake.fulfillment.YandexDeliveryOfferService.create_for_draft",
+        "apps.delivery.offer_service.YandexDeliveryOfferService.create_for_cart",
         failed_quote,
     )
     backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
@@ -950,14 +988,14 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
     )
     monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
 
-    def fake_quote(draft):
+    def fake_quote(cart, **kwargs):
         return DeliveryQuote.objects.create(
-            order_draft=draft,
+            cart=cart,
             environment=DeliveryEnvironment.TEST,
             kind=DeliveryQuoteKind.PRELIMINARY,
             status=DeliveryQuoteStatus.SUCCEEDED,
             request_fingerprint="a" * 64,
-            destination_address=draft.delivery_address,
+            destination_address=kwargs["destination_address"],
             amount=Decimal("321.50"),
             currency="RUB",
             delivery_days=2,
@@ -974,7 +1012,7 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
         )
         return payment
 
-    monkeypatch.setattr("apps.intake.fulfillment.YandexDeliveryQuoteService.quote_draft", fake_quote)
+    monkeypatch.setattr("apps.delivery.checkout.YandexDeliveryQuoteService.quote_cart", fake_quote)
     monkeypatch.setattr("apps.assistant.tools.PaymentService.ensure_payment_link", fake_payment)
 
     texts = [
