@@ -54,6 +54,7 @@ class CartService:
         if not created:
             item.quantity = quantity
             item.save(update_fields=["quantity", "updated_at"])
+        cart.save(update_fields=["updated_at"])
         return item
 
     @staticmethod
@@ -67,15 +68,27 @@ class CartService:
         item = CartItem.objects.get(cart=cart, product=product)
         item.quantity = quantity
         item.save(update_fields=["quantity", "updated_at"])
+        cart.save(update_fields=["updated_at"])
         return item
 
     @staticmethod
     def remove_item(cart: Cart, product: Product) -> None:
         CartItem.objects.filter(cart=cart, product=product).delete()
+        cart.save(update_fields=["updated_at"])
 
     @staticmethod
     def clear(cart: Cart) -> None:
         cart.items.all().delete()
+        cart.receiving_type = ""
+        cart.delivery_address = ""
+        cart.payment_method = ""
+        cart.customer_comment = ""
+        cart.contact_phone = ""
+        cart.contact_email = ""
+        cart.save(update_fields=[
+            "receiving_type", "delivery_address", "payment_method",
+            "customer_comment", "contact_phone", "contact_email", "updated_at",
+        ])
 
     @staticmethod
     def get_contents(cart: Cart):

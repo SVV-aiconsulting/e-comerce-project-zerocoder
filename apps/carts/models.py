@@ -5,7 +5,7 @@ from django.db import models
 from django.db.models import Q
 
 from apps.catalog.models import Product
-from apps.common.enums import CartStatus, Channel
+from apps.common.enums import CartStatus, Channel, PaymentMethod, ReceivingType
 from apps.common.models import TimeStampedModel
 from apps.customers.models import Customer
 
@@ -38,6 +38,28 @@ class Cart(TimeStampedModel):
         default=CartStatus.ACTIVE,
         verbose_name="Статус",
     )
+    receiving_type = models.CharField(
+        max_length=16,
+        choices=ReceivingType.choices,
+        blank=True,
+        verbose_name="Способ получения текущего оформления",
+    )
+    delivery_address = models.TextField(
+        blank=True,
+        verbose_name="Адрес текущего оформления",
+    )
+    payment_method = models.CharField(
+        max_length=32,
+        choices=PaymentMethod.choices,
+        blank=True,
+        verbose_name="Способ оплаты текущего оформления",
+    )
+    customer_comment = models.TextField(
+        blank=True,
+        verbose_name="Комментарий текущего оформления",
+    )
+    contact_phone = models.CharField(max_length=11, blank=True)
+    contact_email = models.EmailField(max_length=320, blank=True)
 
     class Meta:
         verbose_name = "Корзина"

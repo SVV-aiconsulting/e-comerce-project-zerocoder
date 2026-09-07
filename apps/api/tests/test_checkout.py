@@ -41,6 +41,30 @@ def test_checkout_preview_with_delivery(api_client, customer, product, active_ca
 
 
 @pytest.mark.django_db
+def test_manual_checkout_state_is_persisted_for_assistant(api_client, customer, active_cart):
+    response = api_client.patch(
+        "/api/checkout/state/",
+        {
+            "channel": Channel.TELEGRAM,
+            "external_user_id": "12345",
+            "customer_id": customer.pk,
+            "receiving_type": ReceivingType.DELIVERY,
+            "delivery_address": "Москва, Тверская, 1",
+            "payment_method": PaymentMethod.CARD_PREPAYMENT,
+            "contact_phone": "89991234567",
+        },
+        format="json",
+    )
+
+    active_cart.refresh_from_db()
+    assert response.status_code == 200
+    assert active_cart.receiving_type == ReceivingType.DELIVERY
+    assert active_cart.delivery_address == "Москва, Тверская, 1"
+    assert active_cart.payment_method == PaymentMethod.CARD_PREPAYMENT
+    assert active_cart.contact_phone == "79991234567"
+
+
+@pytest.mark.django_db
 def test_checkout_preview_pickup_no_delivery(api_client, customer, product, active_cart, delivery_rule):
     CartService.set_item_quantity(active_cart, product, Decimal("1"))
 

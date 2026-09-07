@@ -20,6 +20,11 @@ class UnifiedCartBridge:
             status=CartStatus.ORDERED,
             updated_at__gt=draft.updated_at,
         ).exists()
+        cart_existed = Cart.objects.filter(
+            channel=draft.channel,
+            external_user_id=draft.external_user_id,
+            status=CartStatus.ACTIVE,
+        ).exists()
         cart = CartService.get_or_create_active_cart(
             channel=draft.channel,
             external_user_id=draft.external_user_id,
@@ -33,7 +38,17 @@ class UnifiedCartBridge:
             return draft
         # Пустая новая корзина не должна стирать уже существующий AI-черновик.
         if not cart_items:
-            if draft.items.exists():
+            if not cart_existed and draft.items.exists():
+                UnifiedCartBridge.draft_to_cart(draft)
+            elif cart.updated_at > draft.updated_at:
+                draft.items.all().delete()
+                OrderDraft.objects.filter(pk=draft.pk).update(
+                    receiving_type="",
+                    delivery_address="",
+                    payment_method="",
+                    customer_comment="",
+                )
+            elif draft.items.exists():
                 UnifiedCartBridge.draft_to_cart(draft)
             return draft
         cart_product_ids = {item.product_id for item in cart_items}
@@ -60,6 +75,25 @@ class UnifiedCartBridge:
                 resolution_source=ResolutionSource.EXACT,
                 resolution_confidence=1,
             )
+        checkout_updates = {}
+        for field in (
+            "receiving_type",
+            "delivery_address",
+            "payment_method",
+            "customer_comment",
+        ):
+            value = getattr(cart, field)
+            if value != getattr(draft, field):
+                checkout_updates[field] = value
+        for field in ("contact_phone", "contact_email"):
+            value = getattr(cart, field) or getattr(draft, field)
+            if not value and draft.customer_id:
+                value = getattr(draft.customer, field.removeprefix("contact_"), "")
+            if value and value != getattr(draft, field):
+                checkout_updates[field] = value
+        if checkout_updates:
+            OrderDraft.objects.filter(pk=draft.pk).update(**checkout_updates)
+            draft.refresh_from_db(fields=list(checkout_updates))
         return draft
 
     @staticmethod
@@ -73,4 +107,20 @@ class UnifiedCartBridge:
         CartService.clear(cart)
         for item in draft.items.select_related("product").filter(product__isnull=False):
             CartService.set_item_quantity(cart, item.product, item.requested_quantity)
+        checkout_fields = (
+            "receiving_type",
+            "delivery_address",
+            "payment_method",
+            "customer_comment",
+            "contact_phone",
+            "contact_email",
+        )
+        changed = []
+        for field in checkout_fields:
+            value = getattr(draft, field)
+            if value != getattr(cart, field):
+                setattr(cart, field, value)
+                changed.append(field)
+        if changed:
+            cart.save(update_fields=[*changed, "updated_at"])
         return cart

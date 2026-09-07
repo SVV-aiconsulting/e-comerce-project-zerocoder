@@ -178,6 +178,26 @@ async def test_checkout_preview(client, respx_mock):
 
 
 @pytest.mark.asyncio
+async def test_update_shared_checkout_state(client, respx_mock):
+    route = respx_mock.patch(f"{BASE_URL}/api/checkout/state/").respond(
+        json={"receiving_type": "delivery", "delivery_address": "Москва"}
+    )
+    state = await client.update_checkout_state(
+        channel="telegram",
+        external_user_id="123",
+        customer_id=1,
+        receiving_type="delivery",
+        delivery_address="Москва",
+    )
+    assert state["receiving_type"] == "delivery"
+    import json
+
+    body = json.loads(route.calls[0].request.content)
+    assert body["customer_id"] == 1
+    assert body["delivery_address"] == "Москва"
+
+
+@pytest.mark.asyncio
 async def test_create_order(client, respx_mock):
     respx_mock.post(f"{BASE_URL}/api/orders/").respond(
         status_code=201,

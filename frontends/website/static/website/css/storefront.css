@@ -679,11 +679,17 @@ textarea {
 
 .assistant-consent {
   display: flex;
+  flex-direction: column;
   gap: 9px;
   align-items: flex-start;
   margin-top: 10px;
   color: var(--mist);
   font-size: 0.79rem;
+}
+
+.assistant-consent[hidden],
+.assistant-form[hidden] {
+  display: none !important;
 }
 
 .assistant-consent__actions {

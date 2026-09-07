@@ -263,6 +263,25 @@ class StorefrontApiClient:
             },
         )
 
+    async def update_checkout_state(
+        self,
+        *,
+        channel: str,
+        external_user_id: str,
+        customer_id: int,
+        **updates,
+    ) -> dict:
+        return await self._request(
+            "PATCH",
+            "/api/checkout/state/",
+            json={
+                "channel": channel,
+                "external_user_id": external_user_id,
+                "customer_id": customer_id,
+                **updates,
+            },
+        )
+
     async def create_order(self, payload: dict) -> dict:
         return await self._request("POST", "/api/orders/", json=payload)
 

@@ -459,7 +459,7 @@
   }
 
   async function refreshAssistantConsent() {
-    const status = await request("/personal-data-consent/actions/");
+    const status = await request("/personal-data-consent/actions/?scope=assistant");
     setAssistantConsentState(Boolean(status.granted));
     if (!status.granted) {
       assistantMessages.innerHTML = "";
@@ -544,8 +544,8 @@
       });
       assistantHistoryLoaded = true;
       assistantError.hidden = true;
-      renderAssistantGreeting();
-      assistantForm?.message.focus();
+      setAssistantConsentState(false);
+      await refreshAssistantConsent();
     } catch (error) {
       assistantError.hidden = false;
       assistantError.textContent = error.message;
@@ -599,7 +599,7 @@
 
   assistantConsentAccept?.addEventListener("click", async () => {
     try {
-      await request("/personal-data-consent/actions/", {
+      await request("/personal-data-consent/actions/?scope=assistant", {
         method: "POST",
         body: JSON.stringify({ accepted: true }),
       });
@@ -613,7 +613,7 @@
   });
 
   assistantConsentDecline?.addEventListener("click", async () => {
-    await request("/personal-data-consent/actions/", {
+    await request("/personal-data-consent/actions/?scope=assistant", {
       method: "POST",
       body: JSON.stringify({ accepted: false }),
     });

@@ -11,9 +11,9 @@ from apps.intake.channels.yandex_mail import (
     dispatch_email_outbounds,
     parse_email,
 )
-from apps.intake.enums import InboundEventStatus, OrderDraftStatus, OutboundMessageStatus
+from apps.intake.enums import AssistantMessageRole, InboundEventStatus, OrderDraftStatus, OutboundMessageStatus
 from apps.intake.exceptions import EmailProviderError
-from apps.intake.models import Clarification, InboundEvent, OutboundMessage
+from apps.intake.models import AssistantMessage, Clarification, InboundEvent, OutboundMessage
 from apps.intake.services import InboundEventService, OrderDraftService
 
 
@@ -250,6 +250,14 @@ def test_email_response_is_sent_once_with_thread_headers(
         question="Какую именно рыбу вы хотите?",
         trigger_event=event,
     )
+    AssistantMessage.objects.create(
+        event=event,
+        conversation_key=event.conversation_key,
+        role=AssistantMessageRole.ASSISTANT,
+        content="Ваш заказ оформлен.",
+        action_url="https://yookassa.example.test/pay/email-order",
+        response_type="order_created",
+    )
     sent_messages = []
 
     class FakeSMTP:
@@ -288,6 +296,7 @@ def test_email_response_is_sent_once_with_thread_headers(
     assert sent_messages[0]["In-Reply-To"] == "<inbound-1@example.com>"
     assert "<older@example.com>" in sent_messages[0]["References"]
     assert "<inbound-1@example.com>" in sent_messages[0]["References"]
+    assert "https://yookassa.example.test/pay/email-order" in sent_messages[0].get_content()
 
 
 @pytest.mark.django_db

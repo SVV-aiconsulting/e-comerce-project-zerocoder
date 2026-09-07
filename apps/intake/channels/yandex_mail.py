@@ -338,6 +338,10 @@ def prepare_email_outbounds(batch_size: int | None = None) -> int:
             references = f"{references} {original_message_id}".strip()
         digest = hashlib.sha256(response["id"].encode()).hexdigest()[:32]
         domain = settings.YANDEX_EMAIL_ADDRESS.rsplit("@", 1)[-1]
+        body = response["message"]
+        action_url = str(response.get("action_url") or "").strip()
+        if action_url and action_url not in body:
+            body = f"{body}\n\nСсылка для оплаты:\n{action_url}"
         _, created = OutboundMessage.objects.get_or_create(
             event=event,
             defaults={
@@ -345,7 +349,7 @@ def prepare_email_outbounds(batch_size: int | None = None) -> int:
                 "recipient": recipient,
                 "response_id": response["id"],
                 "subject": subject,
-                "body": response["message"],
+                "body": body,
                 "headers": {
                     "in_reply_to": original_message_id,
                     "references": references,

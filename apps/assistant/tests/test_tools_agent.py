@@ -37,6 +37,7 @@ from apps.intake.models import AssistantMessage, AssistantToolCall, AssistantTur
 from apps.intake.processors import InboundEventProcessor
 from apps.intake.responses import InboundEventResponseService
 from apps.intake.services import InboundEventService, OrderDraftService
+from apps.intake.fulfillment import DraftPricingService
 from apps.orders.models import Order
 from apps.orders.services import OrderService
 from apps.payments.models import Payment
@@ -60,6 +61,9 @@ def test_function_schemas_are_compatible_with_gigachat():
         "Да, подтверждаю этот заказ",
         "Оформляйте заказ",
         "Оформляем",
+        "Согласен",
+        "Оформите заказ",
+        "Можно оформлять",
         "Готов к оплате",
         "Я хочу оплатить свой заказ",
     ],
@@ -75,6 +79,16 @@ def test_explicit_confirmation_rejects_ordinary_dialogue(text):
     event = SimpleNamespace(kind="message", raw_payload={}, raw_text=text)
 
     assert AssistantToolExecutor._explicit_confirmation(event) is False
+
+
+def test_email_confirmation_ignores_reply_subject():
+    event = SimpleNamespace(
+        kind="message",
+        channel="email",
+        raw_payload={},
+        raw_text="Тема: Re: Ваш заказ\n\nСогласен",
+    )
+    assert AssistantToolExecutor._explicit_confirmation(event) is True
 
 
 def test_preview_response_is_backend_rendered_with_delivery_and_one_confirmation():
@@ -293,6 +307,39 @@ def test_catalog_action_prefers_specific_red_fish_alias(customer, product):
         "search_products",
         {"query": "красная рыба", "limit": 30},
     )
+    result = backend._tool_search_products(SearchProductsArgs(query="красная рыба", limit=30))
+    assert [row["name"] for row in result["products"]] == [product.name]
+
+
+@pytest.mark.django_db
+def test_assistant_resumes_manual_cart_checkout(customer, product, settings, monkeypatch):
+    settings.AI_ASSISTANT_ENABLED = True
+    cart = CartService.get_or_create_active_cart(
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+        customer=customer,
+    )
+    CartService.set_item_quantity(cart, product, Decimal("2"))
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="resume-manual-cart",
+        external_user_id="12345",
+        conversation_key="resume-manual-cart",
+        customer=customer,
+        raw_text="Давайте оформим заказ",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    response = InboundEventResponseService.present(event)["response"]
+
+    assert product.name in response["message"]
+    assert "доставка или самовывоз" in response["message"]
+    assert provider.calls == []
 
 
 @pytest.mark.django_db
@@ -518,6 +565,77 @@ def seed_active_draft_with_product(customer, product, conversation_key):
         resolution_confidence=Decimal("1"),
     )
     return draft
+
+
+@pytest.mark.django_db
+def test_email_reply_confirms_current_preview_and_returns_payment_link(
+    customer, product, delivery_rule, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.YANDEX_DELIVERY_ENABLED = False
+    settings.YOOKASSA_ENABLED = True
+    customer.email = "buyer@example.com"
+    customer.save(update_fields=["email", "updated_at"])
+    conversation = "email:confirmation-fixture"
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=Channel.EMAIL,
+        external_user_id=conversation,
+        conversation_key=conversation,
+        customer=customer,
+    )
+    OrderDraftItem.objects.create(
+        draft=draft,
+        line_number=1,
+        raw_product_name=product.name,
+        requested_quantity=product.min_quantity,
+        requested_unit=product.unit,
+        product=product,
+        match_status=ItemMatchStatus.MATCHED,
+        candidate_product_ids=[product.pk],
+        resolution_source=ResolutionSource.EXACT,
+        resolution_confidence=Decimal("1"),
+    )
+    draft.receiving_type = ReceivingType.PICKUP
+    draft.payment_method = PaymentMethod.CARD_PREPAYMENT
+    draft.contact_phone = customer.phone
+    draft.contact_email = customer.email
+    draft.save(update_fields=[
+        "receiving_type", "payment_method", "contact_phone", "contact_email", "updated_at"
+    ])
+    AssistantToolExecutor._refresh_state(draft)
+    draft = DraftPricingService.preview(draft)
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+
+    def fake_payment(order):
+        return Payment.objects.create(
+            order=order,
+            amount=order.total_amount,
+            description=f"Оплата заказа {order.public_number}",
+            confirmation_url="https://yookassa.example.test/pay/email-confirmed",
+        )
+
+    monkeypatch.setattr("apps.assistant.tools.PaymentService.ensure_payment_link", fake_payment)
+    event = InboundEventService.register(
+        channel=Channel.EMAIL,
+        external_event_id="email-confirmation-reply",
+        external_user_id=conversation,
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Тема: Re: Проверьте заказ\n\nОформляйте",
+        raw_payload={"contact_email": customer.email},
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    response = InboundEventResponseService.present(event)["response"]
+
+    assert Order.objects.count() == 1
+    assert response["type"] in {"order_created", "payment_link"}
+    assert response["action_url"].endswith("/email-confirmed")
+    assert provider.calls == []
 
 
 @pytest.mark.django_db

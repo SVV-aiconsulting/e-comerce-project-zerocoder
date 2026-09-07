@@ -65,7 +65,11 @@ class OrderAssistantService:
         last_tool_result = None
 
         try:
-            draft.refresh_from_db()
+            if draft.status not in {
+                OrderDraftStatus.AWAITING_CONFIRMATION,
+                OrderDraftStatus.CONVERTED,
+            }:
+                draft = backend._refresh_state(draft)
             cancellation = backend.cancellation_action()
             if cancellation is not None:
                 tool_name, arguments = cancellation
@@ -559,6 +563,17 @@ class OrderAssistantService:
             lines.append(f"Способ оплаты: {result['payment_method']}")
         if result.get("total_amount") is not None:
             lines.append(f"Итого последнего расчёта: {OrderAssistantService._money(result['total_amount'])} ₽")
+        missing = result.get("missing_fields") or []
+        if "receiving_type" in missing:
+            lines.extend(["", "Выберите способ получения: доставка или самовывоз."])
+        elif "delivery_address" in missing:
+            lines.extend(["", "Укажите адрес доставки."])
+        elif "contact_phone" in missing or "customer" in missing:
+            lines.extend(["", "Для оформления заказа прошу сообщить Ваше имя и телефон в формате 9XXXXXXXXX."])
+        elif "payment_method" in missing:
+            lines.extend(["", "Выберите способ оплаты: наличными при получении или картой онлайн."])
+        elif "contact_email" in missing:
+            lines.extend(["", "Для онлайн-оплаты укажите email для электронного чека."])
         return "\n".join(lines)
 
     @staticmethod

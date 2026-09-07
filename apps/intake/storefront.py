@@ -73,6 +73,17 @@ def get_or_create_assistant_conversation_key(request) -> str:
     return f"{get_or_create_website_user_id(request)}:assistant:{conversation_id}"
 
 
+def website_assistant_consent_identity(request) -> str:
+    conversation_id = request.session.get(SESSION_ASSISTANT_CONVERSATION_KEY)
+    if not conversation_id:
+        get_or_create_assistant_conversation_key(request)
+        conversation_id = request.session[SESSION_ASSISTANT_CONVERSATION_KEY]
+    return (
+        f"{get_or_create_website_user_id(request)}:"
+        f"assistant-consent:{conversation_id}"
+    )
+
+
 def website_cart(request):
     """Return a basket scoped to the browser, never to a CRM customer.
 
@@ -308,6 +319,17 @@ class WebsiteCheckoutPreviewView(WebsiteApiView):
         if payload.get("phone") or payload.get("email"):
             customer = identify_from_payload(request, payload).customer
         cart = website_cart(request)
+        phone = str(payload.get("phone") or "").strip()
+        email = str(payload.get("email") or "").strip()
+        cart.receiving_type = receiving_type
+        cart.delivery_address = str(payload.get("delivery_address") or "").strip()
+        cart.payment_method = str(payload.get("payment_method") or PaymentMethod.CARD_PREPAYMENT)
+        cart.contact_phone = normalize_phone(phone) if phone else ""
+        cart.contact_email = normalize_email(email) if email else ""
+        cart.save(update_fields=[
+            "receiving_type", "delivery_address", "payment_method",
+            "contact_phone", "contact_email", "updated_at",
+        ])
         preview = CheckoutDeliveryService.preview(
             cart=cart,
             customer=customer,
@@ -416,6 +438,31 @@ class WebsiteAssistantMessageView(WebsiteApiView):
 
         external_user_id = get_or_create_website_user_id(request)
         conversation_key = get_or_create_assistant_conversation_key(request)
+        consent_identity = website_assistant_consent_identity(request)
+        consent_is_current = ConsentService.has_current_consent(
+            channel=Channel.WEBSITE,
+            identity_value=consent_identity,
+        )
+        # Совместимость прямых клиентов старого endpoint: явный true в этом же
+        # запросе остаётся допустимым выражением воли. Веб-интерфейс использует
+        # отдельные интерактивные кнопки до отправки первого сообщения.
+        if payload.get("personal_data_consent") and not consent_is_current:
+            ConsentService.record(
+                channel=Channel.WEBSITE,
+                identity_type=IdentityType.WEBSITE_SESSION_ID,
+                identity_value=consent_identity,
+                source="website_ai_assistant",
+                status=ConsentStatus.GRANTED,
+                expression_method=ConsentMethod.WEBSITE_CHECKBOX,
+                evidence={"csrf_protected": True},
+            )
+            consent_is_current = True
+        if not consent_is_current:
+            return json_error(
+                "Перед началом диалога подтвердите согласие на обработку персональных данных.",
+                code="consent_required",
+                status=403,
+            )
         # Website не имеет регистрации. Поэтому сохранённая карточка из browser
         # session никогда не применяется к AI-диалогу: имя и телефон должен
         # явно передать именно текущий посетитель.
@@ -457,16 +504,12 @@ class WebsiteAssistantMessageView(WebsiteApiView):
             email = draft.contact_email
 
         if phone or email or name:
-            consent_is_current = ConsentService.has_current_consent(
-                channel=Channel.WEBSITE,
-                identity_value=external_user_id,
-            )
             if not payload.get("personal_data_consent") and not consent_is_current:
                 return json_error(
                     "Отметьте согласие на обработку данных, чтобы передать контакты для заказа."
                 )
             if payload.get("personal_data_consent") and not consent_is_current:
-                ConsentService.record(channel=Channel.WEBSITE, identity_type=IdentityType.WEBSITE_SESSION_ID, identity_value=external_user_id, source="website_ai_assistant", status=ConsentStatus.GRANTED, expression_method=ConsentMethod.WEBSITE_CHECKBOX, evidence={"csrf_protected": True})
+                ConsentService.record(channel=Channel.WEBSITE, identity_type=IdentityType.WEBSITE_SESSION_ID, identity_value=consent_identity, source="website_ai_assistant", status=ConsentStatus.GRANTED, expression_method=ConsentMethod.WEBSITE_CHECKBOX, evidence={"csrf_protected": True})
         # Email нужен для чека, но не может быть website-идентификатором AI
         # заказа. Это исключает подмену клиента из старой session/cookie.
         if name and phone:
@@ -481,7 +524,7 @@ class WebsiteAssistantMessageView(WebsiteApiView):
                 return json_error("Не удалось идентифицировать клиента.")
             consent_event = PersonalDataConsentEvent.objects.filter(
                 channel=Channel.WEBSITE,
-                identity_value=external_user_id,
+                identity_value=consent_identity,
                 status=ConsentStatus.GRANTED,
             ).order_by("-occurred_at", "-id").first()
             customer.personal_data_consent = True

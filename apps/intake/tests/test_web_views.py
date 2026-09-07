@@ -22,6 +22,14 @@ from apps.intake.storefront import (
 from apps.orders.models import Order
 
 
+def grant_assistant_consent(client):
+    response = client.post(
+        "/personal-data-consent/actions/?scope=assistant",
+        data={"accepted": True},
+    )
+    assert response.status_code == 200
+
+
 @pytest.fixture
 def publish_stub(monkeypatch):
     monkeypatch.setattr(InboundEventService, "publish", lambda _event_id: True)
@@ -75,6 +83,7 @@ def test_website_assistant_never_uses_manual_checkout_customer_from_session(
     session = client.session
     session[SESSION_CUSTOMER_KEY] = previous_customer.pk
     session.save()
+    grant_assistant_consent(client)
 
     response = client.post(
         "/store/assistant/messages/",
@@ -100,6 +109,7 @@ def test_website_assistant_accepts_short_name_with_phone_after_prompt():
 def test_website_assistant_collects_name_and_phone_in_separate_messages(
     client, publish_stub, assistant_enabled
 ):
+    grant_assistant_consent(client)
     first = client.post(
         "/store/assistant/messages/",
         data=json.dumps({"message": "Хочу оформить доставку"}),
@@ -138,6 +148,7 @@ def test_website_assistant_collects_name_and_phone_in_separate_messages(
 def test_website_assistant_event_is_session_bound_and_returns_clarification(
     client, publish_stub, assistant_enabled
 ):
+    grant_assistant_consent(client)
     response = client.post(
         "/store/assistant/messages/",
         data=json.dumps({"message": "Хочу рыбу"}),
@@ -213,7 +224,7 @@ def test_website_assistant_requires_consent_before_storing_contact(
         content_type="application/json",
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 403
     assert InboundEvent.objects.count() == 0
 
 
@@ -221,6 +232,7 @@ def test_website_assistant_requires_consent_before_storing_contact(
 def test_new_website_assistant_conversation_hides_previous_history(
     client, publish_stub, assistant_enabled
 ):
+    grant_assistant_consent(client)
     first = client.post(
         "/store/assistant/messages/",
         data=json.dumps({"message": "Хочу лосось"}),
@@ -238,6 +250,8 @@ def test_new_website_assistant_conversation_hides_previous_history(
 
     assert reset.status_code == 201
     assert client.get("/store/assistant/history/").json()["messages"] == []
+    assert client.get("/personal-data-consent/actions/?scope=assistant").json()["granted"] is False
+    grant_assistant_consent(client)
     second = client.post(
         "/store/assistant/messages/",
         data=json.dumps({"message": "Хочу креветки"}),

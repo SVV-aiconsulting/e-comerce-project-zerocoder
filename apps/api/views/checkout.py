@@ -1,4 +1,6 @@
 """Превью оформления заказа."""
+from django.core.exceptions import ValidationError as DjangoValidationError
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -7,7 +9,9 @@ from apps.api.helpers import get_active_cart, resolve_customer_context
 from apps.api.serializers.checkout import (
     CheckoutPreviewRequestSerializer,
     CheckoutPreviewResponseSerializer,
+    CheckoutStateSerializer,
 )
+from apps.customers.validators import normalize_phone
 from apps.delivery.checkout import CheckoutDeliveryService
 
 
@@ -39,6 +43,11 @@ class CheckoutPreviewView(APIView):
             delivery_address=data.get("delivery_address", ""),
             payment_method=data.get("payment_method"),
         )
+        cart.receiving_type = data["receiving_type"]
+        cart.delivery_address = data.get("delivery_address", "")
+        # payment_method в предварительном запросе доставки может быть
+        # техническим значением тарифа. Реальный выбор сохраняет state endpoint.
+        cart.save(update_fields=["receiving_type", "delivery_address", "updated_at"])
         totals = preview.totals
         quote = preview.quote
 
@@ -56,3 +65,58 @@ class CheckoutPreviewView(APIView):
         response_serializer = CheckoutPreviewResponseSerializer(data=response_data)
         response_serializer.is_valid(raise_exception=True)
         return Response(response_serializer.validated_data)
+
+
+class CheckoutStateView(APIView):
+    """Общее состояние незавершённого checkout для ручного UI и ассистента."""
+
+    authentication_classes = [AdapterTokenAuthentication]
+    permission_classes = []
+
+    @staticmethod
+    def _payload(cart):
+        return {
+            "receiving_type": cart.receiving_type,
+            "delivery_address": cart.delivery_address,
+            "payment_method": cart.payment_method,
+            "customer_comment": cart.customer_comment,
+            "contact_phone": cart.contact_phone,
+            "contact_email": cart.contact_email,
+        }
+
+    def patch(self, request):
+        serializer = CheckoutStateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        customer = resolve_customer_context(
+            channel=data["channel"],
+            external_user_id=data["external_user_id"],
+            customer_id=data.get("customer_id"),
+        )
+        cart = get_active_cart(
+            channel=data["channel"],
+            external_user_id=data["external_user_id"],
+            customer=customer,
+        )
+        changed = []
+        for field in (
+            "receiving_type",
+            "delivery_address",
+            "payment_method",
+            "customer_comment",
+            "contact_email",
+        ):
+            if field in data and data[field] != getattr(cart, field):
+                setattr(cart, field, data[field])
+                changed.append(field)
+        if "contact_phone" in data:
+            try:
+                value = normalize_phone(data["contact_phone"]) if data["contact_phone"] else ""
+            except DjangoValidationError as exc:
+                raise ValidationError({"contact_phone": "Некорректный номер телефона."}) from exc
+            if value != cart.contact_phone:
+                cart.contact_phone = value
+                changed.append("contact_phone")
+        if changed:
+            cart.save(update_fields=[*changed, "updated_at"])
+        return Response(self._payload(cart))

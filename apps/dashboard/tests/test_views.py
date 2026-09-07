@@ -59,6 +59,9 @@ def test_dashboard_shows_metrics_channel_and_attention(
     assert response.status_code == 200
     assert response.context["order_count"] == 1
     assert response.context["paid_count"] == 1
+    assert response.context["average_order_value"] == order.total_amount
+    assert response.context["top_products"][0]["product_name_snapshot"] == product.name
+    assert response.context["daily_orders"][0]["count"] == 1
     assert response.context["channels"][0]["channel"] == Channel.TELEGRAM
     assert response.context["attention_counts"]["AI-заказ"] == 1
     assert response.context["attention_counts"]["Входящий канал"] == 1

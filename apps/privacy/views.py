@@ -19,12 +19,19 @@ def document_view(request, document_type, version=None):
 
 class WebsiteConsentView(View):
     session_key = "website_external_user_id"
+    assistant_conversation_key = "website_assistant_conversation_id"
 
     def _identity(self, request):
         identity = request.session.get(self.session_key)
         if not identity:
-            identity = str(uuid.uuid4())
+            identity = f"web:{uuid.uuid4()}"
             request.session[self.session_key] = identity
+        if request.GET.get("scope") == "assistant":
+            conversation = request.session.get(self.assistant_conversation_key)
+            if not conversation:
+                conversation = str(uuid.uuid4())
+                request.session[self.assistant_conversation_key] = conversation
+            identity = f"{identity}:assistant-consent:{conversation}"
         return identity
 
     def get(self, request):

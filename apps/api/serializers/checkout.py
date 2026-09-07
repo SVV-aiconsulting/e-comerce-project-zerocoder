@@ -26,3 +26,16 @@ class CheckoutPreviewResponseSerializer(serializers.Serializer):
     delivery_days = serializers.IntegerField(required=False, allow_null=True)
     delivery_provider = serializers.CharField(required=False, allow_blank=True)
     delivery_address = serializers.CharField(required=False, allow_blank=True)
+
+
+class CheckoutStateSerializer(ChannelContextSerializer):
+    receiving_type = serializers.ChoiceField(
+        choices=ReceivingType.values, required=False, allow_blank=True
+    )
+    delivery_address = serializers.CharField(required=False, allow_blank=True)
+    payment_method = serializers.ChoiceField(
+        choices=PaymentMethod.values, required=False, allow_blank=True
+    )
+    customer_comment = serializers.CharField(required=False, allow_blank=True)
+    contact_phone = serializers.CharField(required=False, allow_blank=True, max_length=32)
+    contact_email = serializers.EmailField(required=False, allow_blank=True)

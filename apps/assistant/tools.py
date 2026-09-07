@@ -224,6 +224,7 @@ class AssistantToolExecutor:
 
     def _tool_search_products(self, args: SearchProductsArgs) -> dict:
         query = normalize_product_text(args.query)
+        exact_matches = []
         literal_matches = []
         fuzzy_matches = []
         for product in CatalogService.get_active_products().prefetch_related("aliases"):
@@ -231,9 +232,12 @@ class AssistantToolExecutor:
                 literal_matches.append((1, 1.0, product))
                 continue
             variants = [normalize_product_text(product.name)] + [a.normalized_alias for a in product.aliases.all()]
-            substring = any(query in value or value in query for value in variants)
+            exact = any(query == value for value in variants)
+            substring = any(query in value for value in variants)
             score = max(SequenceMatcher(None, query, value).ratio() for value in variants)
-            if substring:
+            if exact:
+                exact_matches.append((2, 1.0, product))
+            elif substring:
                 literal_matches.append((1, score, product))
             elif score >= 0.55:
                 fuzzy_matches.append((0, score, product))
@@ -241,7 +245,9 @@ class AssistantToolExecutor:
         # Нечёткий поиск нужен только как fallback для опечаток. Если каталог уже
         # дал буквальное совпадение по названию или управляемому синониму, нельзя
         # примешивать похожие слова (например, «краб» к запросу «икра»).
-        ranked = literal_matches or fuzzy_matches
+        # Если в CRM есть точный управляемый синоним, общий вложенный синоним
+        # не расширяет выборку: «красная рыба» не становится просто «рыбой».
+        ranked = exact_matches or literal_matches or fuzzy_matches
         ranked.sort(key=lambda row: (-row[0], -row[1], row[2].sort_order, row[2].name))
         products = [self._product_payload(row[2]) for row in ranked[: args.limit]]
         return {
@@ -443,7 +449,13 @@ class AssistantToolExecutor:
         if re.search(
             r"\b(?:покаж\w*|како\w*)\b.*\b(?:состав\w*|корзин\w*)\b",
             text,
-        ) or re.fullmatch(r"(?:что\s+)?(?:сейчас\s+)?в\s+корзине", text):
+        ) or re.fullmatch(r"(?:что\s+)?(?:сейчас\s+)?в\s+корзине", text) or (
+            self._draft().items.exists()
+            and (
+                re.search(r"\b(?:оформ\w*|продолж\w*)\b.*\bзаказ\w*\b", text)
+                or re.search(r"\bуже\b.*\bдобав\w*\b.*\bкорзин\w*\b", text)
+            )
+        ):
             return "get_cart", {}
         return None
 
@@ -660,7 +672,9 @@ class AssistantToolExecutor:
             raise ValueError("Контактные данные имеют неверный формат") from exc
         if updates:
             OrderDraft.objects.filter(pk=draft.pk).update(**updates)
-        return self._cart_payload(self._refresh_state(draft))
+        draft = self._refresh_state(draft)
+        UnifiedCartBridge.draft_to_cart(draft)
+        return self._cart_payload(draft)
 
     def _tool_preview_order(self, _args: EmptyArgs) -> dict:
         draft = self._refresh_state(self._draft())
@@ -832,9 +846,19 @@ class AssistantToolExecutor:
             .values_list("result", flat=True)
             .first()
         )
+        catalog_terms = [
+            {
+                "name": product.name,
+                "aliases": [alias.alias for alias in product.aliases.all()],
+            }
+            for product in CatalogService.get_active_products().prefetch_related("aliases")
+        ]
         return {
             "cart": self._cart_payload(),
             "recent_product_search": recent_search or None,
+            # Только словарь сопоставления. Цены, наличие и описания модель всё
+            # равно обязана получить отдельным search_products в текущем ходе.
+            "catalog_vocabulary": catalog_terms,
         }
 
     def _tool_list_customer_orders(self, args: ListOrdersArgs) -> dict:
@@ -1147,11 +1171,15 @@ class AssistantToolExecutor:
     def _explicit_confirmation(event) -> bool:
         if event.kind == "callback" and bool(event.raw_payload.get("confirmed")):
             return True
-        text = normalize_product_text(event.raw_text)
+        source = event.raw_text
+        if getattr(event, "channel", "") == "email" and "\n\n" in source:
+            source = source.split("\n\n", 1)[1]
+        text = normalize_product_text(source)
         return bool(
             re.fullmatch(
-                r"(?:да(?:\s+подтверждаю(?:\s+(?:этот\s+)?заказ)?)?"
-                r"|(?:подтверждаю|оформляйте|оформляем)(?:\s+(?:этот\s+)?заказ)?"
+                r"(?:да(?:\s+(?:согласен|согласна|подтверждаю)(?:\s+(?:этот\s+)?заказ)?)?"
+                r"|(?:согласен|согласна|подтверждаю|подтверждаем|оформляйте|оформите|оформляем)(?:\s+(?:этот\s+)?заказ)?"
+                r"|можно\s+оформля(?:ть|йте)(?:\s+(?:этот\s+)?заказ)?"
                 r"|готов\s+к\s+оплате|я\s+хочу\s+оплатить(?:\s+(?:этот|свой)\s+заказ)?)",
                 text,
             )

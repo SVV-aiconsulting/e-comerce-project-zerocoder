@@ -2,7 +2,7 @@ from django.urls import path
 
 from apps.api.views.cart import CartClearView, CartItemView, CartView
 from apps.api.views.catalog import ProductDetailView, ProductListView
-from apps.api.views.checkout import CheckoutPreviewView
+from apps.api.views.checkout import CheckoutPreviewView, CheckoutStateView
 from apps.api.views.health import HealthCheckView
 from apps.api.views.identify import IdentifyCustomerView
 from apps.api.views.intake import InboundEventDetailView, InboundEventView
@@ -28,6 +28,7 @@ urlpatterns = [
     path("cart/items/", CartClearView.as_view(), name="cart-clear"),
     path("cart/items/<int:product_id>/", CartItemView.as_view(), name="cart-item"),
     path("checkout/preview/", CheckoutPreviewView.as_view(), name="checkout-preview"),
+    path("checkout/state/", CheckoutStateView.as_view(), name="checkout-state"),
     path("orders/", CreateOrderView.as_view(), name="order-create"),
     path("orders/<str:public_number>/", OrderDetailView.as_view(), name="order-detail"),
     path(

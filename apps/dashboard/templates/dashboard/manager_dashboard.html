@@ -35,9 +35,12 @@
   <div class="dashboard-grid">
     <div class="dashboard-card"><small>Заказы</small><strong>{{ order_count }}</strong></div>
     <div class="dashboard-card"><small>Оборот</small><strong>{{ revenue|floatformat:2 }} ₽</strong></div>
+    <div class="dashboard-card"><small>Средний чек</small><strong>{{ average_order_value|floatformat:2 }} ₽</strong></div>
     <div class="dashboard-card"><small>Оплачено</small><strong>{{ paid_count }} ({{ paid_share }}%)</strong></div>
     <div class="dashboard-card"><small>Автоматически создано</small><strong>{{ automated_orders }} ({{ automation_share }}%)</strong></div>
     <div class="dashboard-card"><small>AI-черновики</small><strong>{{ draft_count }}</strong></div>
+    <div class="dashboard-card"><small>Заказы с доставкой</small><strong>{{ delivery_share }}%</strong></div>
+    <div class="dashboard-card"><small>Новые клиенты</small><strong>{{ new_customer_orders }} ({{ new_customer_share }}%)</strong></div>
     <div class="dashboard-card"><small>AI-ходы: успех / ошибки</small><strong>{{ ai_stats.succeeded|default:0 }} / {{ ai_stats.failed|default:0 }}</strong><small>tool calls: {{ ai_stats.tool_calls|default:0 }} · средняя задержка: {{ ai_stats.avg_latency|default:0|floatformat:0 }} мс</small></div>
   </div>
 
@@ -48,6 +51,23 @@
       {% for row in channels %}<tr><td>{{ row.label }}</td><td>{{ row.count }}</td><td>{{ row.revenue|floatformat:2 }} ₽</td></tr>{% empty %}<tr><td colspan="3">За выбранный период заказов нет.</td></tr>{% endfor %}
     </tbody>
   </table>
+
+  <div class="dashboard-grid">
+    <div class="dashboard-card">
+      <h2>Топ товаров</h2>
+      <table class="dashboard-table">
+        <thead><tr><th>Товар</th><th>Количество</th><th>Выручка</th></tr></thead>
+        <tbody>{% for row in top_products %}<tr><td>{{ row.product_name_snapshot }}</td><td>{{ row.quantity|floatformat:-3 }}</td><td>{{ row.revenue|floatformat:2 }} ₽</td></tr>{% empty %}<tr><td colspan="3">Нет данных</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+    <div class="dashboard-card">
+      <h2>Динамика по дням</h2>
+      <table class="dashboard-table">
+        <thead><tr><th>Дата</th><th>Заказов</th><th>Оборот</th></tr></thead>
+        <tbody>{% for row in daily_orders %}<tr><td>{{ row.day|date:"d.m.Y" }}</td><td>{{ row.count }}</td><td>{{ row.revenue|floatformat:2 }} ₽</td></tr>{% empty %}<tr><td colspan="3">Нет данных</td></tr>{% endfor %}</tbody>
+      </table>
+    </div>
+  </div>
 
   <div class="dashboard-grid">
     <div class="dashboard-card">

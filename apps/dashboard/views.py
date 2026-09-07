@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Avg, Count, Q, Sum
+from django.db.models.functions import TruncDate
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.urls import reverse
@@ -28,7 +29,7 @@ from apps.intake.models import (
     InboundEvent,
     OrderDraft,
 )
-from apps.orders.models import Order
+from apps.orders.models import Order, OrderItem
 from apps.payments.models import Payment, PaymentState, Refund, RefundState
 
 
@@ -257,17 +258,36 @@ def manager_dashboard(request: HttpRequest) -> HttpResponse:
     automated_orders = orders.filter(source_draft__isnull=False).count()
     attention = _attention_items()
     order_count = order_totals["count"] or 0
+    revenue = order_totals["revenue"] or Decimal("0")
+    top_products = list(
+        OrderItem.objects.filter(order__in=orders)
+        .values("product_name_snapshot")
+        .annotate(quantity=Sum("quantity"), revenue=Sum("total_price"))
+        .order_by("-revenue", "product_name_snapshot")[:10]
+    )
+    daily_orders = list(
+        orders.annotate(day=TruncDate("created_at"))
+        .values("day")
+        .annotate(count=Count("id"), revenue=Sum("total_amount"))
+        .order_by("day")
+    )
+    delivery_count = orders.filter(receiving_type="delivery").count()
+    new_customer_orders = orders.filter(is_new_customer=True).count()
 
     context = {
         "period_start": start,
         "period_end": end,
         "order_count": order_count,
-        "revenue": order_totals["revenue"] or Decimal("0"),
+        "revenue": revenue,
+        "average_order_value": revenue / order_count if order_count else Decimal("0"),
         "paid_count": order_totals["paid"] or 0,
         "paid_share": round((order_totals["paid"] or 0) * 100 / order_count) if order_count else 0,
         "automated_orders": automated_orders,
         "automation_share": round(automated_orders * 100 / order_count) if order_count else 0,
         "draft_count": draft_count,
+        "delivery_share": round(delivery_count * 100 / order_count) if order_count else 0,
+        "new_customer_orders": new_customer_orders,
+        "new_customer_share": round(new_customer_orders * 100 / order_count) if order_count else 0,
         "ai_stats": ai_stats,
         "channels": channels,
         "order_statuses": order_statuses,
@@ -275,5 +295,7 @@ def manager_dashboard(request: HttpRequest) -> HttpResponse:
         "shipment_statuses": shipment_statuses,
         "attention": attention,
         "attention_counts": _counts(attention),
+        "top_products": top_products,
+        "daily_orders": daily_orders,
     }
     return render(request, "dashboard/manager_dashboard.html", context)

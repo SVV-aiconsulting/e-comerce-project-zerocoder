@@ -54,6 +54,16 @@ async def get_meta(api) -> dict:
     return _meta_cache
 
 
+async def _persist_checkout_state(api, session: dict, **updates) -> None:
+    """Сохраняет этап ручного checkout там же, откуда его читает AI."""
+    await api.update_checkout_state(
+        channel=CHANNEL,
+        external_user_id=session["external_user_id"],
+        customer_id=session["customer_id"],
+        **updates,
+    )
+
+
 def _format_preview(preview: dict) -> str:
     free = " (бесплатно)" if preview.get("free_delivery") else ""
     return (
@@ -119,6 +129,20 @@ async def callback_checkout_start(callback: CallbackQuery, state: FSMContext, ap
         delivery_confirmed=False,
         checkout_email="",
     )
+    try:
+        await _persist_checkout_state(
+            api,
+            session,
+            receiving_type="",
+            delivery_address="",
+            payment_method="",
+            customer_comment="",
+            contact_email="",
+        )
+    except (ApiError, BackendUnavailableError) as exc:
+        await answer_api_error(callback, exc)
+        await callback.answer()
+        return
 
     await callback.message.answer(
         "Выберите способ получения:",
@@ -140,6 +164,18 @@ async def callback_checkout_receiving(callback: CallbackQuery, state: FSMContext
         delivery_confirmed=False,
         checkout_preview=None,
     )
+    try:
+        await _persist_checkout_state(
+            api,
+            session,
+            receiving_type=receiving_type,
+            delivery_address="" if receiving_type == "pickup" else session.get("delivery_address", ""),
+            payment_method="",
+        )
+    except (ApiError, BackendUnavailableError) as exc:
+        await answer_api_error(callback, exc)
+        await callback.answer()
+        return
 
     if receiving_type == "delivery":
         await state.set_state(CheckoutStates.entering_address)
@@ -260,6 +296,12 @@ async def callback_checkout_payment(callback: CallbackQuery, state: FSMContext, 
         await callback.answer("Сначала подтвердите параметры доставки", show_alert=True)
         return
     await update_session(state, payment_method=payment_method)
+    try:
+        await _persist_checkout_state(api, session, payment_method=payment_method)
+    except (ApiError, BackendUnavailableError) as exc:
+        await answer_api_error(callback, exc)
+        await callback.answer()
+        return
     if payment_method == "card_prepayment":
         await state.set_state(CheckoutStates.entering_receipt_email)
         await callback.message.answer(
@@ -298,6 +340,7 @@ async def on_receipt_email(message: Message, state: FSMContext, api) -> None:
         return
 
     await update_session(state, checkout_email=email.lower())
+    await _persist_checkout_state(api, session, contact_email=email.lower())
     await _ask_for_comment(message, state)
 
 
@@ -311,6 +354,7 @@ async def callback_skip_comment(callback: CallbackQuery, state: FSMContext, api)
         return
 
     await update_session(state, customer_comment="")
+    await _persist_checkout_state(api, session, customer_comment="")
     await state.set_state(None)
     await _show_preview(callback.message, state, api, user_id=callback.from_user.id)
     await callback.answer()
@@ -325,6 +369,11 @@ async def on_customer_comment(message: Message, state: FSMContext, api) -> None:
         return
 
     await update_session(state, customer_comment=(message.text or "").strip())
+    await _persist_checkout_state(
+        api,
+        session,
+        customer_comment=(message.text or "").strip(),
+    )
     await state.set_state(None)
     await _show_preview(message, state, api, user_id=message.from_user.id)
 
