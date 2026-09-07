@@ -41,8 +41,9 @@ Pipeline `.github/workflows/deploy.yml` выполняет backend-, Telegram- �
 
 Предупреждения `manage.py check --deploy` о Django HSTS/redirect учитываются вместе
 с фактическим TLS termination и HTTP→HTTPS redirect в nginx. До обработки реальных
-коммерческих данных необходимо заменить слабый/временный `DJANGO_SECRET_KEY` и
-выполнить checklist `docs/SECRET_ROTATION.md`.
+коммерческих данных необходимо вернуться к checklist `docs/SECRET_ROTATION.md`.
+Фактическая ротация исключена из текущего MVP решением владельца и не выполняется
+на работающем демонстрационном стенде.
 
 ## 3. Контрольный сценарий защиты
 
