@@ -1,0 +1,16 @@
+{% extends "admin/base_site.html" %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p>Карточки клиентов и их канальные идентификаторы будут удалены. Связанные заказы сохранятся, но имя, контакты, внешний ID, адрес доставки и комментарий клиента будут очищены. Отменить эту операцию нельзя.</p>
+<ul>
+  {% for customer in customers %}<li>{{ customer }}</li>{% endfor %}
+</ul>
+<form method="post">
+  {% csrf_token %}
+  {% for customer in customers %}<input type="hidden" name="{{ action_checkbox_name }}" value="{{ customer.pk }}">{% endfor %}
+  <input type="hidden" name="action" value="{{ action_name }}">
+  <input type="hidden" name="confirm_anonymize" value="yes">
+  <button class="button" type="submit">Подтвердить удаление и обезличивание</button>
+  <a class="button cancel-link" href="../">Отмена</a>
+</form>
+{% endblock %}

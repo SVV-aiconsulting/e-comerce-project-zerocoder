@@ -1,5 +1,7 @@
 from django import forms
 from django.contrib import admin, messages
+from django.contrib.admin.helpers import ACTION_CHECKBOX_NAME
+from django.template.response import TemplateResponse
 from django.urls import reverse
 from django.utils.html import format_html
 from django.utils import timezone
@@ -192,6 +194,18 @@ class CustomerAdmin(admin.ModelAdmin):
 
     @admin.action(description="Удалить карточки и обезличить связанные заказы")
     def anonymize_and_delete_customers(self, request, queryset):
+        if request.POST.get("confirm_anonymize") != "yes":
+            return TemplateResponse(
+                request,
+                "admin/customers/confirm_anonymize.html",
+                {
+                    **self.admin_site.each_context(request),
+                    "title": "Удаление карточек и обезличивание заказов",
+                    "customers": queryset,
+                    "action_checkbox_name": ACTION_CHECKBOX_NAME,
+                    "action_name": "anonymize_and_delete_customers",
+                },
+            )
         customers = list(queryset)
         for customer in customers:
             CustomerService.anonymize_orders_and_delete(customer=customer)
