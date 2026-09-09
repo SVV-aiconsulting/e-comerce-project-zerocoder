@@ -4,6 +4,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
+from django.core.management import call_command
 from django.utils import timezone
 
 from apps.assistant.services import OrderAssistantService
@@ -371,6 +372,88 @@ def test_catalog_action_prefers_specific_red_fish_alias(customer, product):
     )
     result = backend._tool_search_products(SearchProductsArgs(query="красная рыба", limit=30))
     assert [row["name"] for row in result["products"]] == [product.name]
+
+
+@pytest.mark.django_db
+def test_consultant_catalog_queries_are_specific_and_support_multiple_categories(
+    customer, settings
+):
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+
+    def search(text, suffix):
+        event = InboundEventService.register(
+            channel=Channel.TELEGRAM,
+            external_event_id=f"specific-catalog-{suffix}",
+            external_user_id="specific-catalog-user",
+            conversation_key="specific-catalog-dialog",
+            customer=customer,
+            raw_text=text,
+        ).event
+        draft, _ = OrderDraftService.get_or_create_active(
+            channel=event.channel,
+            external_user_id=event.external_user_id,
+            conversation_key=event.conversation_key,
+            customer=customer,
+        )
+        turn = AssistantTurn.objects.create(event=event, draft=draft)
+        backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+        action = backend.catalog_action()
+        assert action is not None
+        return backend.execute(*action, call_index=1)
+
+    red = search("Какая у вас есть красная рыба?", "red")
+    mixed = search("А есть белая рыба и креветки?", "mixed")
+
+    assert [row["code"] for row in red["products"]] == [
+        "DEMO-SALMON",
+        "DEMO-TROUT",
+    ]
+    assert [row["code"] for row in mixed["products"]] == [
+        "DEMO-COD",
+        "DEMO-SHRIMP",
+    ]
+
+
+@pytest.mark.django_db
+def test_consultant_adds_each_explicit_product_quantity_without_model_guess(
+    customer, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    provider = ScriptedProvider([])
+    monkeypatch.setattr(
+        "apps.assistant.services.get_gigachat_provider", lambda: provider
+    )
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="deterministic-multi-item",
+        external_user_id="multi-item-user",
+        conversation_key="multi-item-dialog",
+        customer=customer,
+        raw_text="Хочу заказать осьминога 1 кг и краба 1 упаковку",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    items = list(
+        event.draft.items.select_related("product")
+        .order_by("line_number")
+        .values_list("product__public_code", "requested_quantity")
+    )
+    response = InboundEventResponseService.present(event)["response"]["message"]
+
+    assert items == [
+        ("DEMO-OCTOPUS", Decimal("1")),
+        ("DEMO-CRAB", Decimal("1")),
+    ]
+    assert "Осьминог" in response
+    assert "Краб камчатский" in response
+    assert "доставка или самовывоз" in response
+    assert provider.calls == []
 
 
 @pytest.mark.django_db
@@ -1155,9 +1238,6 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
 
     provider = ScriptedProvider(
         [
-            tool("search_products", {"query": product.name, "limit": 5}),
-            tool("set_cart_item", {"product_code": product.public_code, "quantity": 2.0}),
-            answer("Добавил два товара. Нужна доставка или самовывоз?"),
             tool("configure_checkout", {"receiving_type": "delivery", "delivery_address": "Москва, Тверская улица, 1"}),
             answer("Адрес записан. Как будете оплачивать?"),
             tool("configure_checkout", {"payment_method": "card_prepayment", "contact_email": "buyer@example.com"}),

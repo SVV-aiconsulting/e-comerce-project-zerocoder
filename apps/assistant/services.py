@@ -202,6 +202,35 @@ class OrderAssistantService:
                         output_tokens,
                     )
                     return OrderDraft.objects.get(pk=draft.pk)
+            cart_actions = backend.cart_mutation_actions()
+            if cart_actions:
+                result = None
+                for call_index, (tool_name, arguments) in enumerate(
+                    cart_actions, start=1
+                ):
+                    result = backend.execute(tool_name, arguments, call_index)
+                    tool_calls += 1
+                    if result.get("ok") is False:
+                        break
+                content, response_type, action_url = cls._render_tool_response(
+                    "set_cart_item", result, ""
+                )
+                cls._save_response(
+                    event,
+                    content,
+                    response_type=response_type,
+                    action_url=action_url,
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
             catalog = backend.catalog_action()
             if catalog is not None:
                 tool_name, arguments = catalog
@@ -509,7 +538,16 @@ class OrderAssistantService:
                 from apps.assistant.conversation import safe_narration
                 narration = safe_narration(model_content)
                 if not narration:
-                    narration = "Что для вас важнее при выборе?" if len(result.get("products", [])) > 1 else "Какое количество вам нужно?"
+                    if tool_name == "compare_products":
+                        narration = "Хотите добавить один из вариантов в заказ?"
+                    elif len(result.get("products", [])) > 1:
+                        narration = (
+                            "Какой вариант показать подробнее или добавить в заказ?"
+                        )
+                    else:
+                        narration = (
+                            "Добавить этот товар в заказ? Укажите нужное количество."
+                        )
                 return f"{card}\n\n{narration}", "catalog", ""
             return card, "catalog", ""
         if tool_name == "get_cart":

@@ -480,6 +480,7 @@
 
   function setAssistantConsentState(granted) {
     assistantConsentGranted = granted;
+    assistantDialog?.classList.toggle("assistant-dialog--consent", !granted);
     if (assistantConsent) assistantConsent.hidden = granted;
     if (assistantForm) {
       assistantForm.hidden = !granted;

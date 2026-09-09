@@ -261,6 +261,15 @@ class AssistantToolExecutor:
 
     def _tool_search_products(self, args: SearchProductsArgs) -> dict:
         query = normalize_product_text(args.query)
+        # Internal deterministic resolvers join independent catalogue intents
+        # with ``|``.  Each part is matched separately so a request such as
+        # "белая рыба и креветки" does not degrade into a fuzzy full-catalog
+        # response.
+        query_parts = [
+            normalize_product_text(part)
+            for part in str(args.query).split("|")
+            if normalize_product_text(part)
+        ] or ([query] if query else [])
         exact_matches = []
         literal_matches = []
         fuzzy_matches = []
@@ -269,9 +278,13 @@ class AssistantToolExecutor:
                 literal_matches.append((1, 1.0, product))
                 continue
             variants = [normalize_product_text(product.name)] + [a.normalized_alias for a in product.aliases.all()]
-            exact = any(query == value for value in variants)
-            substring = any(query in value for value in variants)
-            score = max(SequenceMatcher(None, query, value).ratio() for value in variants)
+            exact = any(part == value for part in query_parts for value in variants)
+            substring = any(part in value for part in query_parts for value in variants)
+            score = max(
+                SequenceMatcher(None, part, value).ratio()
+                for part in query_parts
+                for value in variants
+            )
             if exact:
                 exact_matches.append((2, 1.0, product))
             elif substring:
@@ -344,8 +357,6 @@ class AssistantToolExecutor:
 
     def catalog_action(self):
         """Детерминированно направляет вопросы о каталоге в источник истины."""
-        if settings.AI_CONSULTANT_ENABLED:
-            return None
         text = normalize_product_text(self.event.raw_text)
         if re.search(r"\b(?:заказ\w*|корзин\w*)\b", text):
             return None
@@ -380,7 +391,20 @@ class AssistantToolExecutor:
         if exact_aliases:
             # Самый конкретный управляемый синоним важнее вложенного общего:
             # «красная рыба» не должна превращаться в запрос «рыба».
-            query = max(exact_aliases, key=lambda value: len(normalize_product_text(value)))
+            unique_aliases = {
+                normalize_product_text(alias): alias for alias in exact_aliases
+            }
+            specific_aliases = [
+                alias
+                for normalized, alias in unique_aliases.items()
+                if not any(
+                    normalized != other and normalized in other
+                    for other in unique_aliases
+                )
+            ]
+            query = " | ".join(
+                sorted(specific_aliases, key=lambda value: text.index(normalize_product_text(value)))
+            )
         elif products:
             names = {product.name for product in products}
             if len(names) == 1:
@@ -406,6 +430,104 @@ class AssistantToolExecutor:
             else:
                 query = ""
         return "search_products", {"query": query, "limit": 30}
+
+    @staticmethod
+    def _quantity_values(text: str) -> list[Decimal]:
+        """Extract likely item quantities while excluding contacts and addresses."""
+        cleaned = re.sub(r"[\w.+-]+@[\w.-]+", "", text)
+        cleaned = re.sub(
+            r"(?<!\d)(?:[+78][\s().-]*)?9(?:[\s().-]*\d){9}(?!\d)",
+            "",
+            cleaned,
+        )
+        cleaned = re.sub(
+            r"\b(?:улица|ул\.?|дом|д\.?|проспект)\s+[^;\n]+",
+            "",
+            cleaned,
+            flags=re.I,
+        )
+        normalized = normalize_product_text(cleaned)
+        values = [
+            Decimal(value.replace(",", "."))
+            for value in re.findall(r"\d+(?:[.,]\d+)?", cleaned)
+        ]
+        word_values = {
+            "один": Decimal(1), "одна": Decimal(1), "одно": Decimal(1),
+            "одну": Decimal(1), "два": Decimal(2), "две": Decimal(2),
+            "три": Decimal(3), "четыре": Decimal(4), "пять": Decimal(5),
+            "шесть": Decimal(6), "семь": Decimal(7), "восемь": Decimal(8),
+            "девять": Decimal(9), "десять": Decimal(10),
+            "полкило": Decimal("0.5"), "полкилограмма": Decimal("0.5"),
+            "половина": Decimal("0.5"), "половину": Decimal("0.5"),
+        }
+        values.extend(
+            value
+            for word, value in word_values.items()
+            if re.search(rf"\b{word}\b", normalized)
+        )
+        return values
+
+    def cart_mutation_actions(self):
+        """Resolve explicit product/quantity pairs without trusting model memory.
+
+        Each conjunction-separated clause is interpreted independently. This
+        prevents a preceding full-catalog result from making the model select
+        its first item when the customer explicitly names other products.
+        """
+        raw_text = self.event.raw_text
+        text = normalize_product_text(raw_text)
+        if "?" in raw_text or re.search(r"\b(?:удал|убер|отмен|сравн)\w*", text):
+            return None
+
+        clauses = re.split(r"\s+(?:и|а\s+также)\s+|[;,]", raw_text, flags=re.I)
+        actions = []
+        seen_codes = set()
+        for clause in clauses:
+            products = self._mentioned_products(clause)
+            quantities = self._quantity_values(clause)
+            if len(products) != 1 or not quantities:
+                continue
+            product = products[0]
+            if product.public_code in seen_codes:
+                continue
+            actions.append(
+                (
+                    "set_cart_item",
+                    {
+                        "product_code": product.public_code,
+                        "quantity": float(quantities[0]),
+                    },
+                )
+            )
+            seen_codes.add(product.public_code)
+
+        if actions:
+            return actions
+
+        # Follow-up like "2 кг" after a single server-backed product card.
+        from apps.intake.models import ConversationMemory
+
+        memory = ConversationMemory.objects.filter(
+            channel=self.event.channel,
+            external_user_id=self.event.external_user_id,
+            conversation_key=self.event.conversation_key,
+        ).first()
+        options = list(memory.options or []) if memory else []
+        quantities = self._quantity_values(raw_text)
+        if len(options) == 1 and quantities and re.search(
+            r"\b(?:кг|килограмм\w*|шт\.?|штук\w*|упаков\w*|банк\w*)\b",
+            text,
+        ):
+            return [
+                (
+                    "set_cart_item",
+                    {
+                        "product_code": options[0]["code"],
+                        "quantity": float(quantities[0]),
+                    },
+                )
+            ]
+        return None
 
     def referential_catalog_action(self):
         """Resolve pronouns and ordinals from the last server-backed product list.
@@ -715,26 +837,7 @@ class AssistantToolExecutor:
 
     @staticmethod
     def _message_has_quantity(text: str, expected=None) -> bool:
-        text = re.sub(r"[\w.+-]+@[\w.-]+", "", text)
-        text = re.sub(r"(?<!\d)(?:[+78][\s().-]*)?9(?:[\s().-]*\d){9}(?!\d)", "", text)
-        text = re.sub(r"\b(?:улица|ул\.?|дом|д\.?|проспект)\s+[^;\n]+", "", text, flags=re.I)
-        normalized = normalize_product_text(text)
-        numeric = [Decimal(value.replace(",", ".")) for value in re.findall(
-            r"\d+(?:[.,]\d+)?", text
-        )]
-        word_values = {
-            "один": Decimal(1), "одна": Decimal(1), "одно": Decimal(1),
-            "одну": Decimal(1), "два": Decimal(2), "две": Decimal(2),
-            "три": Decimal(3), "четыре": Decimal(4), "пять": Decimal(5),
-            "шесть": Decimal(6), "семь": Decimal(7), "восемь": Decimal(8),
-            "девять": Decimal(9), "десять": Decimal(10),
-            "полкило": Decimal("0.5"), "полкилограмма": Decimal("0.5"),
-            "половина": Decimal("0.5"), "половину": Decimal("0.5"),
-        }
-        mentioned = numeric + [
-            value for word, value in word_values.items()
-            if re.search(rf"\b{word}\b", normalized)
-        ]
+        mentioned = AssistantToolExecutor._quantity_values(text)
         if expected is None:
             return bool(mentioned)
         return Decimal(str(expected)) in mentioned

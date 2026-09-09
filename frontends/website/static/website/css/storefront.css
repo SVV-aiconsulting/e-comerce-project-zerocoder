@@ -639,6 +639,12 @@ textarea {
   scrollbar-color: var(--slate) transparent;
 }
 
+.assistant-dialog--consent .assistant-messages {
+  min-height: 0;
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
 .assistant-message {
   width: fit-content;
   max-width: 88%;
@@ -679,12 +685,18 @@ textarea {
 
 .assistant-consent {
   display: flex;
+  flex: 0 0 auto;
   flex-direction: column;
   gap: 9px;
   align-items: flex-start;
-  margin-top: 10px;
+  margin: 0;
+  padding: 4px 24px 24px;
   color: var(--mist);
   font-size: 0.79rem;
+}
+
+.assistant-consent p {
+  margin: 0;
 }
 
 .assistant-consent[hidden],
@@ -1200,6 +1212,7 @@ textarea {
   .assistant-dialog__header,
   .assistant-note,
   .assistant-messages,
+  .assistant-consent,
   .assistant-form {
     padding-left: 18px;
     padding-right: 18px;
