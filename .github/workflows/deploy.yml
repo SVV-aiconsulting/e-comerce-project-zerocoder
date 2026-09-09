@@ -174,6 +174,12 @@ jobs:
             git fetch "https://github.com/$REPOSITORY.git" "${{ github.sha }}"
             git checkout -B main FETCH_HEAD
 
+            # На небольшом VPS immutable-образы нескольких прошлых релизов
+            # могут заполнить диск ещё до распаковки следующего. Работающие
+            # контейнеры и их образы prune не затрагивает.
+            docker image prune -a -f
+            docker builder prune -af
+
             echo "STEP: pull immutable container images"
             export WEBMARKET_IMAGE_TAG="${{ github.sha }}"
             export WEBMARKET_TELEGRAM_BOT_IMAGE_TAG="${{ github.sha }}"
