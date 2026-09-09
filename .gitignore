@@ -41,6 +41,9 @@ report*.md
 # Local service data
 .local/
 
+# Deployment database snapshots kept only on the VPS.
+/backups/
+
 # TLS certificates created only on VPS by Certbot.
 deploy/certbot/conf/
 deploy/certbot/www/
