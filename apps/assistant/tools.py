@@ -128,6 +128,14 @@ TOOL_BY_NAME = {spec.name: spec for spec in TOOL_SPECS}
 
 
 class AssistantToolExecutor:
+    # This vocabulary determines only the category of a product that is not
+    # sold. The actual alternatives always come from active catalogue cards
+    # with the respective managed alias.
+    UNAVAILABLE_PRODUCT_ALTERNATIVES = {
+        "пикша": "белая рыба",
+        "нерка": "красная рыба",
+    }
+
     def __init__(self, *, event, draft, turn):
         self.event = event
         self.draft_id = draft.pk
@@ -387,10 +395,55 @@ class AssistantToolExecutor:
             "count": len(ordered),
         }
 
+    def unavailable_catalog_action(self):
+        """Offer only verified alternatives for common absent fish."""
+        text = normalize_product_text(self.event.raw_text)
+        products = list(
+            CatalogService.get_active_products().prefetch_related("aliases")
+        )
+        for item, alternative_alias in self.UNAVAILABLE_PRODUCT_ALTERNATIVES.items():
+            if not any(self._word_matches(item, word) for word in text.split()):
+                continue
+            if any(
+                item
+                in {
+                    normalize_product_text(product.name),
+                    *(alias.normalized_alias for alias in product.aliases.all()),
+                }
+                for product in products
+            ):
+                continue
+            alternatives = list(
+                CatalogService.get_active_products()
+                .filter(aliases__normalized_alias=alternative_alias)
+                .distinct()
+                .order_by("sort_order", "name")
+            )
+            return "recommend_products", {
+                "query": item,
+                "product_codes": [product.public_code for product in alternatives],
+                "unavailable_item": item,
+                "alternative_alias": alternative_alias,
+            }
+        return None
+
     @staticmethod
     def _word_matches(left: str, right: str) -> bool:
         """Сопоставляет простые русские словоформы без отдельного NLP-пакета."""
         if left == right:
+            return True
+        # У некоторых существительных меняется основа при склонении. Это
+        # особенно важно для "тунец" → "тунца": без него явная позиция в
+        # заказе выпадала, и ход ошибочно переходил к LLM.
+        irregular_stems = {
+            "тунец": "тунц",
+            "тунца": "тунц",
+            "тунцу": "тунц",
+            "тунцем": "тунц",
+            "тунце": "тунц",
+            "тунцы": "тунц",
+        }
+        if irregular_stems.get(left, left) == irregular_stems.get(right, right):
             return True
         endings = (
             "иями", "ями", "ами", "его", "ого", "ему", "ому", "ими", "ыми",
@@ -474,19 +527,31 @@ class AssistantToolExecutor:
                 text,
             )
             or re.search(r"\bчто\s+у\s+вас\s+есть\b", text)
+            or re.search(r"\b(?:есть\s+ли|где)\b", text)
+            or re.search(r"^есть\s+\w+", text)
             or re.search(
                 r"\b(?:какая|какие|какой|что)\b.*\b(?:есть|имеется|прода\w*)\b",
                 text,
             )
-            or bool(
-                products
-                and (
-                    re.search(r"\b(?:какая|какие|какой)\b", text)
-                    or text.startswith("а ")
+                or bool(
+                    products
+                    and (
+                        re.search(r"\b(?:какая|какие|какой)\b", text)
+                    or text.startswith(("а ", "и "))
                 )
             )
         )
-        if not catalog_question:
+        unavailable = self.unavailable_catalog_action()
+        if unavailable is not None and (
+            catalog_question
+            or re.search(r"\b(?:заказ\w*|закаж\w*|добав\w*|куп\w*|хоч\w*)\b", text)
+        ):
+            return unavailable
+
+        # Exact managed aliases are already safe category selections. This
+        # covers natural requests such as "Хочу белую рыбу" and follow-ups
+        # like "Это вся белая рыба?" without leaving the choice to the LLM.
+        if not catalog_question and not exact_aliases:
             return None
         if exact_aliases:
             # Самый конкретный управляемый синоним важнее вложенного общего:
@@ -1584,6 +1649,22 @@ class AssistantToolExecutor:
         source = event.raw_text
         if getattr(event, "channel", "") == "email" and "\n\n" in source:
             source = source.split("\n\n", 1)[1]
+        if getattr(event, "channel", "") == "email":
+            # Mail clients often append the whole previous thread. Only the
+            # first non-empty paragraph is the customer's new reply; quoted
+            # text must not invalidate an otherwise clear "Согласен".
+            reply_lines = []
+            for line in source.replace("\r\n", "\n").split("\n"):
+                stripped = line.strip()
+                if reply_lines and (
+                    not stripped
+                    or stripped.startswith(">")
+                    or re.match(r"^(?:on .+wrote:|в .+писал[аи]?:)", stripped, re.I)
+                ):
+                    break
+                if stripped:
+                    reply_lines.append(stripped)
+            source = " ".join(reply_lines)
         text = normalize_product_text(source)
         return bool(
             re.fullmatch(

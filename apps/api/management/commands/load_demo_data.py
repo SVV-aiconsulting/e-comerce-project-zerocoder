@@ -165,7 +165,7 @@ class Command(BaseCommand):
                 "delivery_length_cm": 40,
                 "delivery_width_cm": 30,
                 "delivery_height_cm": 6,
-                "aliases": ["камбала", "рыба"],
+                "aliases": ["камбала", "рыба", "белая рыба"],
             },
             {
                 "public_code": "DEMO-CAVIAR",

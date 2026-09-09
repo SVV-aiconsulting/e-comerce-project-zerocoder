@@ -238,6 +238,17 @@ class OrderAssistantService:
                 content, response_type, action_url = cls._render_tool_response(
                     "set_cart_item", result, ""
                 )
+                unavailable = backend.unavailable_catalog_action()
+                if result.get("ok") is not False and unavailable is not None:
+                    tool_name, arguments = unavailable
+                    alternatives = backend.execute(
+                        tool_name, arguments, tool_calls + 1
+                    )
+                    tool_calls += 1
+                    alternatives_content, _, _ = cls._render_tool_response(
+                        tool_name, alternatives, ""
+                    )
+                    content = f"{content}\n\n{alternatives_content}"
                 cls._save_response(
                     event,
                     content,
