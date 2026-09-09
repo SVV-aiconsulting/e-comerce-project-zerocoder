@@ -553,14 +553,11 @@ class OrderAssistantService:
         if tool_name == "get_cart":
             return cls._render_cart(result), "cart", ""
         if tool_name in {"set_cart_item", "remove_cart_item", "configure_checkout"}:
-            lines = [cls._render_cart(result), ""]
-            lines.append(
-                AssistantToolExecutor._missing_fields_message(
-                    result.get("missing_fields")
+            lines = [cls._render_cart(result)]
+            if not result.get("missing_fields"):
+                lines.extend(
+                    ["", "Все обязательные параметры заполнены. Рассчитать актуальный итог?"]
                 )
-                if result.get("missing_fields")
-                else "Все обязательные параметры заполнены. Рассчитать актуальный итог?"
-            )
             response_type = (
                 "checkout_updated"
                 if tool_name == "configure_checkout"

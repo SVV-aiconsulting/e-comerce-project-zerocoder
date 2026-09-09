@@ -453,6 +453,7 @@ def test_consultant_adds_each_explicit_product_quantity_without_model_guess(
     assert "Осьминог" in response
     assert "Краб камчатский" in response
     assert "доставка или самовывоз" in response
+    assert response.lower().count("доставка или самовывоз") == 1
     assert provider.calls == []
 
 
