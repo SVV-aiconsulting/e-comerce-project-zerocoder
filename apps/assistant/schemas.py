@@ -46,6 +46,10 @@ class RemoveCartItemArgs(StrictToolArgs):
 class ConfigureCheckoutArgs(StrictToolArgs):
     receiving_type: Literal["delivery", "pickup"] | None = None
     delivery_address: str | None = Field(default=None, max_length=1000)
+    desired_date: str | None = Field(
+        default=None,
+        description="Дата получения в формате YYYY-MM-DD.",
+    )
     payment_method: Literal[
         "cash_on_delivery", "card_on_delivery", "card_prepayment"
     ] | None = None

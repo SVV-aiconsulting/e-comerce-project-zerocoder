@@ -135,7 +135,11 @@ class OrderAssistantService:
                     output_tokens,
                 )
                 return OrderDraft.objects.get(pk=draft.pk)
-            checkout = backend.checkout_action()
+            # A message can contain both products and checkout terms (common
+            # for email). Apply products first; otherwise an early checkout
+            # response would discard the delivery, payment and address part.
+            cart_actions = backend.cart_mutation_actions()
+            checkout = None if cart_actions else backend.checkout_action()
             if checkout is not None:
                 tool_name, arguments = checkout
                 result = backend.execute(tool_name, arguments, 1)
@@ -225,7 +229,6 @@ class OrderAssistantService:
                     output_tokens,
                 )
                 return OrderDraft.objects.get(pk=draft.pk)
-            cart_actions = backend.cart_mutation_actions()
             if cart_actions:
                 result = None
                 for call_index, (tool_name, arguments) in enumerate(
@@ -235,9 +238,7 @@ class OrderAssistantService:
                     tool_calls += 1
                     if result.get("ok") is False:
                         break
-                content, response_type, action_url = cls._render_tool_response(
-                    "set_cart_item", result, ""
-                )
+                rendered_tool = "set_cart_item"
                 unavailable = backend.unavailable_catalog_action()
                 if result.get("ok") is not False and unavailable is not None:
                     tool_name, arguments = unavailable
@@ -248,7 +249,24 @@ class OrderAssistantService:
                     alternatives_content, _, _ = cls._render_tool_response(
                         tool_name, alternatives, ""
                     )
+                    content, response_type, action_url = cls._render_tool_response(
+                        rendered_tool, result, ""
+                    )
                     content = f"{content}\n\n{alternatives_content}"
+                elif result.get("ok") is not False:
+                    checkout = backend.checkout_action()
+                    if checkout is not None:
+                        tool_name, arguments = checkout
+                        result = backend.execute(tool_name, arguments, tool_calls + 1)
+                        tool_calls += 1
+                        rendered_tool = tool_name
+                        if result.get("ok") is not False and not result.get("missing_fields"):
+                            result = backend.execute("preview_order", {}, tool_calls + 1)
+                            tool_calls += 1
+                            rendered_tool = "preview_order"
+                content, response_type, action_url = cls._render_tool_response(
+                    rendered_tool, result, ""
+                ) if unavailable is None else (content, response_type, action_url)
                 cls._save_response(
                     event,
                     content,

@@ -989,6 +989,67 @@ def test_consultant_adds_inflected_multiple_products_without_model_guess(
 
 
 @pytest.mark.django_db
+def test_single_message_order_applies_cart_delivery_payment_and_previews(
+    customer, settings, monkeypatch
+):
+    """Email-like orders must preserve every explicit checkout term."""
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_CONSULTANT_ENABLED = True
+    settings.YANDEX_DELIVERY_ENABLED = True
+    customer.email = "buyer@example.com"
+    customer.save(update_fields=["email", "updated_at"])
+    call_command("load_demo_data")
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+
+    def fake_quote(cart, **kwargs):
+        return DeliveryQuote.objects.create(
+            cart=cart,
+            environment=DeliveryEnvironment.TEST,
+            kind=DeliveryQuoteKind.PRELIMINARY,
+            status=DeliveryQuoteStatus.SUCCEEDED,
+            request_fingerprint="b" * 64,
+            destination_address=kwargs["destination_address"],
+            amount=Decimal("321.50"),
+            currency="RUB",
+            delivery_days=2,
+        )
+
+    monkeypatch.setattr(
+        "apps.delivery.checkout.YandexDeliveryQuoteService.quote_cart", fake_quote
+    )
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="one-message-checkout",
+        external_user_id="one-message-user",
+        conversation_key="one-message-dialog",
+        customer=customer,
+        raw_text=(
+            "Привезите завтра 2 упаковки креветок по адресу Москва улица Разина 15. "
+            "Оплата будет картой"
+        ),
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    draft = event.draft
+    response = InboundEventResponseService.present(event)["response"]
+
+    assert list(draft.items.values_list("product__public_code", flat=True)) == ["DEMO-SHRIMP"]
+    assert draft.items.get().requested_quantity == Decimal("2")
+    assert draft.receiving_type == ReceivingType.DELIVERY
+    assert draft.delivery_address == "Москва улица Разина 15"
+    assert draft.payment_method == PaymentMethod.CARD_PREPAYMENT
+    assert draft.desired_date == timezone.localdate() + timedelta(days=1)
+    assert response["type"] == "order_preview", response
+    assert "Проверьте заказ" in response["message"]
+    assert "Креветки тигровые" in response["message"]
+    assert provider.calls == []
+
+
+@pytest.mark.django_db
 def test_website_name_step_naturally_requests_phone(customer, settings, monkeypatch):
     settings.AI_ASSISTANT_ENABLED = True
     settings.AI_CONSULTANT_ENABLED = True
@@ -1806,16 +1867,12 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
     customer.email = "buyer@example.com"
     customer.save(update_fields=["email", "updated_at"])
 
-    provider = ScriptedProvider(
-        [
-            tool("configure_checkout", {"receiving_type": "delivery", "delivery_address": "Москва, Тверская улица, 1"}),
-            answer("Адрес записан. Как будете оплачивать?"),
-            tool("configure_checkout", {"payment_method": "card_prepayment", "contact_email": "buyer@example.com"}),
-            answer("Выбрана онлайн-оплата. Рассчитать итог?"),
-            tool("confirm_order", {"preview_revision": 4}),
-            answer("Без явного подтверждения заказ не создан. Напишите «подтверждаю»."),
-        ]
-    )
+    # Cart and explicit checkout fields are now resolved by the deterministic
+    # layer. Keep one ordinary conversational reply to verify that a preview
+    # remains part of the model context before a separate confirmation.
+    provider = ScriptedProvider([
+        answer("Заказ создаётся только после отдельного явного подтверждения клиента.")
+    ])
     monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
 
     def fake_quote(cart, **kwargs):
@@ -1849,7 +1906,6 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
         f"Хочу два товара {product.name}",
         "Доставка на Москва, Тверская улица, 1",
         "Оплачу картой онлайн, чек на buyer@example.com",
-        "Рассчитай итог",
         "Спасибо",
         "Да, подтверждаю заказ",
     ]

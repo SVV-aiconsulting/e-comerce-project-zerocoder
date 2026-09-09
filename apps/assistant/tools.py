@@ -5,7 +5,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from difflib import SequenceMatcher
 
@@ -828,46 +828,40 @@ class AssistantToolExecutor:
         text = normalize_product_text(self.event.raw_text)
         draft = self._draft()
         arguments = {}
-        if "?" in self.event.raw_text or re.search(r"\b(?:добав|убер|замен|сравн)\w*", text):
+        if "?" in self.event.raw_text or re.search(r"\b(?:убер|замен|сравн)\w*", text):
             return None
 
-        if re.fullmatch(r"(?:доставка|нужна доставка|доставк(?:ой|у))", text):
+        delivery_requested = bool(
+            re.search(r"\b(?:достав\w*|привез\w*)\b", text)
+        )
+        if re.fullmatch(r"(?:доставка|нужна доставка|доставк(?:ой|у))", text) or delivery_requested:
             arguments["receiving_type"] = ReceivingType.DELIVERY
         elif re.fullmatch(
             r"(?:самовывоз|самовывозом|заберу сам(?:а)?|нужен самовывоз)", text
         ):
             arguments["receiving_type"] = ReceivingType.PICKUP
-        elif re.fullmatch(
+        if re.fullmatch(
             r"(?:карта|картой|карта онлайн|картой онлайн|оплата картой(?: онлайн)?)",
             text,
-        ):
+        ) or re.search(r"\b(?:оплат\w*|оплач\w*|плат\w*)\b[^.!?;]*\bкарт\w*\b", text):
             arguments["payment_method"] = PaymentMethod.CARD_PREPAYMENT
         elif re.fullmatch(
             r"(?:наличные|наличными|наличные при получении|наличными при получении)",
             text,
         ):
             arguments["payment_method"] = PaymentMethod.CASH_ON_DELIVERY
-        elif (
-            draft.receiving_type == ReceivingType.DELIVERY
-            and {"delivery_address", "delivery_quote"}.intersection(
-                draft.missing_fields or []
-            )
-            and re.search(r"\d", self.event.raw_text)
-            and (
-                "," in self.event.raw_text
-                or re.search(
-                    r"\b(?:улиц\w*|проспект\w*|переулок\w*|бульвар\w*|"
-                    r"шоссе|набережн\w*|дом\w*)\b",
-                    text,
-                )
-            )
-        ):
-            arguments.update(
-                {
-                    "receiving_type": ReceivingType.DELIVERY,
-                    "delivery_address": normalize_delivery_address(self.event.raw_text),
-                }
-            )
+
+        address = self._delivery_address_from_message(self.event.raw_text)
+        if address and (delivery_requested or draft.receiving_type == ReceivingType.DELIVERY):
+            arguments.update({
+                "receiving_type": ReceivingType.DELIVERY,
+                "delivery_address": address,
+            })
+
+        if re.search(r"\bзавтра\b", text):
+            arguments["desired_date"] = (timezone.localdate() + timedelta(days=1)).isoformat()
+        elif re.search(r"\bсегодня\b", text):
+            arguments["desired_date"] = timezone.localdate().isoformat()
 
         email_match = re.search(
             r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.+-])",
@@ -879,6 +873,35 @@ class AssistantToolExecutor:
         if not arguments:
             return None
         return "configure_checkout", arguments
+
+    @staticmethod
+    def _delivery_address_from_message(raw_text: str) -> str:
+        """Extract only an address, never the surrounding order request.
+
+        A delivery provider must receive ``Москва, улица ...``, not a complete
+        sentence that also contains products and payment method.
+        """
+        match = re.search(
+            r"\b(?:по\s+адресу|адрес(?:у|\s+доставки)?|на)\s+(.+)",
+            raw_text,
+            flags=re.IGNORECASE,
+        )
+        candidate = match.group(1) if match else raw_text
+        candidate = re.split(
+            r"(?:[.!?;]|\b(?:оплат\w*|оплач\w*|плат\w*)\b)",
+            candidate,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip(" ,:-")
+        normalized = normalize_product_text(candidate)
+        has_street = re.search(
+            r"\b(?:улиц\w*|ул\.?|проспект\w*|переулок\w*|бульвар\w*|"
+            r"шоссе|набережн\w*|дом\w*|д\.)\b",
+            normalized,
+        )
+        if not has_street or not re.search(r"\d", candidate):
+            return ""
+        return normalize_delivery_address(candidate)
 
     def preview_action(self):
         """Не отдаёт короткое согласие модели, если черновик уже готов к расчёту."""
@@ -1101,6 +1124,7 @@ class AssistantToolExecutor:
             for field in (
                 "receiving_type",
                 "delivery_address",
+                "desired_date",
                 "payment_method",
                 "contact_phone",
                 "contact_email",
@@ -1116,11 +1140,16 @@ class AssistantToolExecutor:
             }
         draft = self._prepare_change()
         updates = {}
-        for field in ("receiving_type", "delivery_address", "payment_method", "customer_comment"):
+        for field in ("receiving_type", "delivery_address", "desired_date", "payment_method", "customer_comment"):
             value = getattr(args, field)
             if value is not None:
                 if field == "delivery_address":
                     value = normalize_delivery_address(value)
+                if field == "desired_date":
+                    try:
+                        value = date.fromisoformat(value)
+                    except ValueError as exc:
+                        raise ValueError("Дата получения должна быть в формате ГГГГ-ММ-ДД") from exc
                 updates[field] = value
         try:
             if args.contact_phone is not None:
