@@ -480,6 +480,7 @@ class WebsiteAssistantMessageView(WebsiteApiView):
             draft is not None
             and draft.customer_id is None
             and "customer" in (draft.missing_fields or [])
+            and bool(draft.receiving_type)
         )
         if not name and awaiting_identity:
             name = short_contact_name(message)

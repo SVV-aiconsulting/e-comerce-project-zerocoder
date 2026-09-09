@@ -122,6 +122,7 @@ def test_website_assistant_collects_name_and_phone_in_separate_messages(
         external_user_id=initial_event.external_user_id,
         conversation_key=initial_event.conversation_key,
         status=OrderDraftStatus.NEEDS_CLARIFICATION,
+        receiving_type="pickup",
         missing_fields=["customer"],
     )
 
@@ -145,6 +146,36 @@ def test_website_assistant_collects_name_and_phone_in_separate_messages(
     )
     assert event.customer.name == "Алексей"
     assert event.customer.phone == "79113454545"
+
+
+@pytest.mark.django_db
+def test_website_assistant_does_not_treat_catalog_followup_as_customer_name(
+    client, publish_stub, assistant_enabled, product
+):
+    grant_assistant_consent(client)
+    first = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Какая есть красная рыба?"}),
+        content_type="application/json",
+    )
+    initial_event = InboundEvent.objects.get(public_id=first.json()["event_id"])
+    OrderDraft.objects.create(
+        channel=Channel.WEBSITE,
+        external_user_id=initial_event.external_user_id,
+        conversation_key=initial_event.conversation_key,
+        status=OrderDraftStatus.NEEDS_CLARIFICATION,
+        missing_fields=["items", "receiving_type", "customer"],
+    )
+
+    response = client.post(
+        "/store/assistant/messages/",
+        data=json.dumps({"message": "Цена"}),
+        content_type="application/json",
+    )
+
+    event = InboundEvent.objects.get(public_id=response.json()["event_id"])
+    assert event.raw_payload["contact_name"] == ""
+    assert event.raw_payload["contact_phone"] == ""
 
 
 @pytest.mark.django_db
