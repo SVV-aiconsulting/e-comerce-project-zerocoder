@@ -415,13 +415,24 @@ class OrderAssistantService:
                 )
                 return OrderDraft.objects.get(pk=draft.pk)
 
+            semantic_catalog = backend.semantic_catalog_request()
+            all_definitions = backend.definitions()
+            semantic_definitions = [
+                definition
+                for definition in all_definitions
+                if definition["name"] == "recommend_products"
+            ]
             for call_index in range(1, settings.AI_ASSISTANT_MAX_TOOL_CALLS + 2):
                 from apps.intake.leases import check_lease
                 check_lease()
                 completion = llm.generate_with_tools(
                     system_prompt=system_prompt,
                     messages=messages,
-                    functions=backend.definitions(),
+                    functions=(
+                        semantic_definitions
+                        if semantic_catalog and call_index == 1
+                        else all_definitions
+                    ),
                 )
                 model_calls += 1
                 input_tokens += completion.input_tokens or 0
@@ -565,6 +576,8 @@ class OrderAssistantService:
                         narration = "Хотите добавить один из вариантов в заказ?"
                     elif tool_name == "recommend_products" and not result.get("products"):
                         narration = "Расскажите, что для вас важно, и я попробую подобрать другой вариант."
+                    elif not result.get("products"):
+                        narration = "Уточните вид товара или назовите другой продукт — я проверю каталог ещё раз."
                     elif result.get("scope") == "selection":
                         narration = "Укажите количество для каждого из этих товаров."
                     elif len(result.get("products", [])) > 1:

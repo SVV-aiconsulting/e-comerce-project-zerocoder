@@ -295,7 +295,7 @@ class AssistantToolExecutor:
                 exact_matches.append((2, 1.0, product))
             elif substring:
                 literal_matches.append((1, score, product))
-            elif score >= 0.55:
+            elif score >= 0.75:
                 fuzzy_matches.append((0, score, product))
 
         # Нечёткий поиск нужен только как fallback для опечаток. Если каталог уже
@@ -434,7 +434,9 @@ class AssistantToolExecutor:
             if self._variant_is_mentioned(text, alias.alias)
         ]
         if re.search(r"\b(?:заказ\w*|корзин\w*)\b", text):
-            if len(products) >= 2 and not self._quantity_values(self.event.raw_text):
+            has_conjunction = bool(re.search(r"\b(?:и|а\s+также)\b", text))
+            selection_is_complete = len(products) >= 2 or not has_conjunction
+            if products and selection_is_complete and not self._quantity_values(self.event.raw_text):
                 return "search_products", {
                     "query": " | ".join(product.name for product in products),
                     "limit": 30,
@@ -526,6 +528,29 @@ class AssistantToolExecutor:
             # поиск здесь лишил бы её возможности подобрать реальные аналоги.
             return None
         return "search_products", {"query": query, "limit": 30}
+
+    def semantic_catalog_request(self) -> bool:
+        """Нужен ли отдельный смысловой выбор по полному снимку каталога."""
+        if not settings.AI_CONSULTANT_ENABLED:
+            return False
+        text = normalize_product_text(self.event.raw_text)
+        products = self._mentioned_products(text)
+        asks_catalog = bool(
+            re.search(r"\b(?:есть\s+ли|что\s+у\s+вас|како\w*\s+у\s+вас|"
+                      r"подбер\w*|посовет\w*|предлож\w*)\b", text)
+            or re.search(r"\b(?:товар\w*|ассортимент\w*|прода[её]те|в\s+продаже)\b", text)
+        )
+        unknown_order_item = bool(
+            re.search(r"\b(?:заказ\w*|закаж\w*|добав\w*|куп\w*|хоч\w*)\b", text)
+            and (
+                not products
+                or (
+                    len(products) == 1
+                    and re.search(r"\b(?:и|а\s+также)\b", text)
+                )
+            )
+        )
+        return asks_catalog or unknown_order_item
 
     @staticmethod
     def _quantity_values(text: str) -> list[Decimal]:

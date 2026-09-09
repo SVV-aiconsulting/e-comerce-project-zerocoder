@@ -256,6 +256,18 @@ def test_product_search_does_not_mix_fuzzy_match_into_literal_match(product):
     assert [item["name"] for item in result["products"]] == ["Икра лососёвая"]
 
 
+@pytest.mark.django_db
+def test_missing_haddock_does_not_fuzzy_match_caviar(product):
+    product.name = "Икра лососёвая"
+    product.public_code = "TEST-CAVIAR-NOT-HADDOCK"
+    product.save(update_fields=["name", "public_code", "updated_at"])
+    backend = object.__new__(AssistantToolExecutor)
+
+    result = backend._tool_search_products(SearchProductsArgs(query="пикша", limit=30))
+
+    assert result["products"] == []
+
+
 def test_cart_update_response_uses_full_backend_cart_not_model_claim():
     content, response_type, _ = OrderAssistantService._render_tool_response(
         "set_cart_item",
@@ -518,6 +530,41 @@ def test_semantic_catalog_context_contains_complete_product_cards(
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Что у вас есть из малюсков?",
+        "Есть ли у вас пикша?",
+        "Посоветуйте что-нибудь нежное",
+        "Добавьте треску и пикшу",
+    ],
+)
+def test_semantic_catalog_requests_are_routed_to_catalog_analysis(
+    text, customer, settings
+):
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id=f"semantic-route-{abs(hash(text))}",
+        external_user_id="semantic-route-user",
+        conversation_key="semantic-route-dialog",
+        customer=customer,
+        raw_text=text,
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    assert backend.semantic_catalog_request() is True
+
+
+@pytest.mark.django_db
 def test_semantic_recommendation_returns_only_validated_catalog_cards(
     customer, settings, monkeypatch
 ):
@@ -555,6 +602,12 @@ def test_semantic_recommendation_returns_only_validated_catalog_cards(
         assert name in response
     assert "Краб камчатский" not in response
     assert "Морской еж" not in response
+    assert [definition["name"] for definition in provider.calls[0]["functions"]] == [
+        "recommend_products"
+    ]
+    assert "set_cart_item" in {
+        definition["name"] for definition in provider.calls[1]["functions"]
+    }
 
 
 @pytest.mark.django_db
