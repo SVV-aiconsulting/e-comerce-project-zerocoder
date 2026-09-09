@@ -32,7 +32,7 @@ class InboundEventProcessor:
             if event.kind == InboundEventKind.MESSAGE and not event.raw_text.strip():
                 return ProcessingOutcome(status=InboundEventStatus.IGNORED)
 
-            draft, _ = OrderDraftService.get_or_create_active(
+            draft, created = OrderDraftService.get_or_create_active(
                 channel=event.channel,
                 external_user_id=event.external_user_id,
                 conversation_key=event.conversation_key,
@@ -68,7 +68,19 @@ class InboundEventProcessor:
                 OrderDraft.objects.filter(pk=draft.pk).update(**contact_updates)
                 draft.refresh_from_db(fields=list(contact_updates))
 
-            draft = UnifiedCartBridge.cart_to_draft(draft)
+            # A fresh website AI conversation can reuse only the products from
+            # its browser cart.  Address, receiving method, payment method and
+            # contacts are an explicit decision in this conversation and must
+            # never leak from an earlier manual checkout.
+            fresh_website_assistant_dialogue = (
+                created
+                and event.channel == "website"
+                and event.raw_payload.get("source") == "website_ai_assistant"
+            )
+            draft = UnifiedCartBridge.cart_to_draft(
+                draft,
+                include_checkout=not fresh_website_assistant_dialogue,
+            )
             InboundEvent.objects.filter(pk=event.pk).update(
                 draft_id=draft.pk,
                 customer_id=event.customer_id or draft.customer_id,

@@ -9,7 +9,14 @@ from apps.intake.models import OrderDraft, OrderDraftItem
 class UnifiedCartBridge:
     @staticmethod
     @transaction.atomic
-    def cart_to_draft(draft):
+    def cart_to_draft(draft, *, include_checkout=True):
+        """Synchronize the shared cart into an assistant draft.
+
+        A new website assistant conversation may continue to use the current
+        browser cart, but checkout details are conversation-scoped consent and
+        intent.  They must not be silently treated as a choice in the new
+        conversation.
+        """
         from apps.intake.services import OrderDraftService
         if draft.cart_id:
             cart = Cart.objects.select_for_update().get(pk=draft.cart_id)
@@ -27,8 +34,11 @@ class UnifiedCartBridge:
         rows = list(cart.items.select_related("product").order_by("pk"))
         old = {i.product_id: i.requested_quantity for i in draft.items.all()}
         new = {i.product_id: i.quantity for i in rows}
-        changes = {f: getattr(cart, f) for f in Cart.CHECKOUT_FIELDS
-                   if getattr(cart, f) != getattr(draft, f)}
+        changes = (
+            {f: getattr(cart, f) for f in Cart.CHECKOUT_FIELDS
+             if getattr(cart, f) != getattr(draft, f)}
+            if include_checkout else {}
+        )
         # Contact supplied by the event remains available before checkout sync.
         changes = {f:v for f,v in changes.items() if v or f not in ("contact_phone", "contact_email")}
         if (old != new or changes) and draft.status in ACTIVE_DRAFT_STATUSES:
