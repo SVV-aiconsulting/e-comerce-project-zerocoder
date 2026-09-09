@@ -24,6 +24,10 @@ class RecommendProductsArgs(StrictToolArgs):
         max_length=255,
         description="Явно запрошенный отсутствующий товар или пустая строка, если клиент не называл отсутствующий товар.",
     )
+    alternative_alias: str = Field(
+        max_length=255,
+        description="Самый конкретный общий синоним из catalog_snapshot для проверки альтернатив или пустая строка, если unavailable_item пуст.",
+    )
 
 
 class EmptyArgs(StrictToolArgs):

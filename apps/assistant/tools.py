@@ -361,11 +361,28 @@ class AssistantToolExecutor:
                 unavailable_item = ""
 
         ordered = [by_code[code] for code in requested_codes]
+        alternative_alias = normalize_product_text(args.alternative_alias)
+        if unavailable_item:
+            # Для аналогов LLM определяет смысловую категорию, а backend
+            # проверяет её по управляемым синонимам. Поэтому «пикша» может быть
+            # отнесена к «белой рыбе», но кальмар в ответ уже не попадёт.
+            if alternative_alias:
+                ordered = [
+                    product
+                    for product in ordered
+                    if any(
+                        alias.normalized_alias == alternative_alias
+                        for alias in product.aliases.all()
+                    )
+                ]
+            else:
+                ordered = []
         return {
             "ok": True,
             "query": args.query,
             "scope": "recommendation",
             "unavailable_item": unavailable_item,
+            "alternative_alias": alternative_alias,
             "products": [self._product_payload(product) for product in ordered],
             "count": len(ordered),
         }

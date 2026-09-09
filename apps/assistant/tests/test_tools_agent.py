@@ -577,6 +577,7 @@ def test_semantic_recommendation_returns_only_validated_catalog_cards(
             "query": "моллюски",
             "product_codes": codes,
             "unavailable_item": "",
+            "alternative_alias": "",
         }),
         answer("Какой из вариантов вам больше подходит?"),
     ])
@@ -654,8 +655,9 @@ def test_unavailable_product_names_absence_and_real_alternative(
     provider = ScriptedProvider([
         tool("recommend_products", {
             "query": "пикша",
-            "product_codes": ["DEMO-COD"],
+            "product_codes": ["DEMO-COD", "DEMO-SQUID"],
             "unavailable_item": "пикша",
+            "alternative_alias": "белая рыба",
         }),
         answer("Подойдёт треска или подобрать по другому критерию?"),
     ])
@@ -680,6 +682,7 @@ def test_unavailable_product_names_absence_and_real_alternative(
     assert "«пикша» сейчас нет" in response
     assert "Треска" in response
     assert "Лосось" not in response
+    assert "Кальмар" not in response
 
 
 @pytest.mark.django_db
