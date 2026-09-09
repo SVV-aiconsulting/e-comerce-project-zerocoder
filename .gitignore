@@ -37,6 +37,7 @@ Thumbs.db
 
 # Local reports/notes
 report*.md
+/WebMarket_FINAL_REVIEW_2026-09-07.md
 
 # The graduation technical specification is submitted separately.
 /docs/TECHNICAL_SPECIFICATION.md
