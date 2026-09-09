@@ -571,13 +571,14 @@ class OrderAssistantService:
             if settings.AI_CONSULTANT_ENABLED:
                 from apps.assistant.conversation import safe_narration
                 narration = safe_narration(model_content)
-                if not narration:
+                if not result.get("products"):
+                    narration = (
+                        "Назовите другой продукт или опишите ваши предпочтения — "
+                        "я проверю каталог ещё раз."
+                    )
+                elif not narration:
                     if tool_name == "compare_products":
                         narration = "Хотите добавить один из вариантов в заказ?"
-                    elif tool_name == "recommend_products" and not result.get("products"):
-                        narration = "Расскажите, что для вас важно, и я попробую подобрать другой вариант."
-                    elif not result.get("products"):
-                        narration = "Уточните вид товара или назовите другой продукт — я проверю каталог ещё раз."
                     elif result.get("scope") == "selection":
                         narration = "Укажите количество для каждого из этих товаров."
                     elif len(result.get("products", [])) > 1:

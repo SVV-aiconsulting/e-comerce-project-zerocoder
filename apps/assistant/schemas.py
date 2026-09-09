@@ -16,8 +16,14 @@ class SearchProductsArgs(StrictToolArgs):
 
 class RecommendProductsArgs(StrictToolArgs):
     query: str = Field(min_length=1, max_length=255)
-    product_codes: list[str] = Field(default_factory=list, max_length=12)
-    unavailable_item: str | None = Field(default=None, max_length=255)
+    product_codes: list[str] = Field(
+        max_length=12,
+        description="Все коды подходящих товаров из catalog_snapshot; пустой список допустим, только если подходящих вариантов действительно нет.",
+    )
+    unavailable_item: str = Field(
+        max_length=255,
+        description="Явно запрошенный отсутствующий товар или пустая строка, если клиент не называл отсутствующий товар.",
+    )
 
 
 class EmptyArgs(StrictToolArgs):

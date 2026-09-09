@@ -576,7 +576,7 @@ def test_semantic_recommendation_returns_only_validated_catalog_cards(
         tool("recommend_products", {
             "query": "моллюски",
             "product_codes": codes,
-            "unavailable_item": None,
+            "unavailable_item": "",
         }),
         answer("Какой из вариантов вам больше подходит?"),
     ])
