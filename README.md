@@ -568,7 +568,7 @@ ss -tlnp | grep -E ':80|:8000|:5432'
 | Admin `400 Bad Request` | Добавить `<VPS_IP>` и `nginx` в `DJANGO_ALLOWED_HOSTS`, затем `docker compose -f docker-compose.prod.yml up -d` |
 | Admin без стилей | Ctrl+F5; в образе уже есть `collectstatic` + WhiteNoise |
 | Бот не грузит фото | Бот должен ходить на `http://web:8000` (override в `docker-compose.prod.yml`); проверить volume `media_data` |
-| VK-бот не стартует | Добавить `VK_BOT_TOKEN`, `VK_GROUP_ID` в `.env` и запустить с `--profile vk` |
+| VK-бот не стартует | Добавить `VK_BOT_TOKEN`, `VK_GROUP_ID` в `.env` и проверить `docker compose -f docker-compose.prod.yml logs vk_bot` |
 | Deploy в Actions упал на preflight | В VPS `.env`: `DJANGO_DEBUG=False` |
 | CSRF 403 в admin по HTTP | Ожидаемо до HTTPS; после TLS — secure cookies в `production.py` |
 

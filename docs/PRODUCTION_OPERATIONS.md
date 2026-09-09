@@ -12,7 +12,8 @@
 2. Включить режим обслуживания, прекратить приём новых действий и дождаться текущих
    intake-задач. Запускать миграции образом того же SHA, который будет обслуживать запросы.
 3. Поднять `web`, `celery_worker` (очередь `intake`), `payment_worker`,
-   `delivery_worker`, `celery_beat`, ботов, PostgreSQL и Redis.
+   `delivery_worker`, `celery_beat`, Telegram/VK-ботов, PostgreSQL и Redis. Если
+   VK настроен в production `.env`, отдельный Compose profile ему не требуется.
 4. Проверить `/api/health/`, `/api/ready/`, heartbeat каждой очереди, возраст самой
    старой заявки, ошибки ЮKassa/Яндекс и ручной guest checkout.
 5. Оставить `AI_CONSULTANT_ENABLED=False`, пока 40 сценариев из
