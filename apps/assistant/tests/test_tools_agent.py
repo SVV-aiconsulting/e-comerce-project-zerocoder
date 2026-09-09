@@ -66,6 +66,9 @@ def test_function_schemas_are_compatible_with_gigachat():
         "Да",
         "Подтверждаю",
         "Да, подтверждаю этот заказ",
+        "Ок",
+        "ок",
+        "OK",
         "Оформляйте заказ",
         "Оформляем",
         "Согласен",
@@ -1650,6 +1653,42 @@ def test_card_prepayment_requires_receipt_email_before_preview(customer, product
     preview = backend.execute("preview_order", {}, 3)
     assert preview["ok"] is True
     assert preview["requires_explicit_confirmation"] is True
+
+
+@pytest.mark.django_db
+def test_invalid_email_reply_keeps_checkout_on_receipt_email_step(
+    customer, product, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_CONSULTANT_ENABLED = True
+    settings.YANDEX_DELIVERY_ENABLED = False
+    conversation = "invalid-receipt-email-dialog"
+    draft = seed_active_draft_with_product(customer, product, conversation)
+    draft.receiving_type = ReceivingType.PICKUP
+    draft.payment_method = PaymentMethod.CARD_PREPAYMENT
+    draft.save(update_fields=["receiving_type", "payment_method", "updated_at"])
+    AssistantToolExecutor._refresh_state(draft)
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="invalid-receipt-email",
+        external_user_id="12345",
+        conversation_key=conversation,
+        customer=customer,
+        raw_text="Пррмс",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    response = InboundEventResponseService.present(event)["response"]
+    draft.refresh_from_db()
+
+    assert response["type"] == "invalid_email"
+    assert "адрес email указан неверно" in response["message"]
+    assert draft.missing_fields == ["contact_email"]
+    assert provider.calls == []
 
 
 @pytest.mark.django_db

@@ -171,6 +171,27 @@ class OrderAssistantService:
                     output_tokens,
                 )
                 return OrderDraft.objects.get(pk=draft.pk)
+            # A card payment cannot proceed without a receipt email. Do not
+            # let an unrelated message fall through to the conversational
+            # model, which would lose the checkout step and ask a generic
+            # catalogue question instead.
+            if "contact_email" in (draft.missing_fields or []):
+                cls._save_response(
+                    event,
+                    "Похоже, адрес email указан неверно. Укажите корректный email "
+                    "для электронного чека ЮKassa.",
+                    response_type="invalid_email",
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
             # В website личность создаётся отдельным сообщением с именем и
             # телефоном. Контакты привязывает intake до запуска ассистента,
             # поэтому нужен один серверный refresh и расчёт без лишнего «да».
