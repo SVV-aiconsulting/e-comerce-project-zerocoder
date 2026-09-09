@@ -26,7 +26,7 @@ def remember(event, content, response_type):
     if questions:
         memory.last_question = questions[-1].strip()
     call = AssistantToolCall.objects.filter(turn__event=event, status="succeeded",
-        tool_name__in=["search_products", "compare_products"]).order_by("-call_index").first()
+        tool_name__in=["search_products", "compare_products", "recommend_products"]).order_by("-call_index").first()
     if call:
         memory.options = [{"code":p["code"], "name":p["name"]} for p in call.result.get("products", [])]
     changed = AssistantToolCall.objects.filter(turn__event=event, status="succeeded", tool_name="set_cart_item").order_by("-call_index").first()

@@ -555,7 +555,7 @@ class OrderAssistantService:
             if result.get("preliminary_delivery_quote"):
                 return cls._render_preliminary_delivery_quote(result), "delivery_quote", ""
             return cls._render_preview(result), "order_preview", ""
-        if tool_name in {"search_products", "compare_products"}:
+        if tool_name in {"search_products", "compare_products", "recommend_products"}:
             card = cls._render_catalog(result)
             if settings.AI_CONSULTANT_ENABLED:
                 from apps.assistant.conversation import safe_narration
@@ -563,6 +563,10 @@ class OrderAssistantService:
                 if not narration:
                     if tool_name == "compare_products":
                         narration = "Хотите добавить один из вариантов в заказ?"
+                    elif tool_name == "recommend_products" and not result.get("products"):
+                        narration = "Расскажите, что для вас важно, и я попробую подобрать другой вариант."
+                    elif result.get("scope") == "selection":
+                        narration = "Укажите количество для каждого из этих товаров."
                     elif len(result.get("products", [])) > 1:
                         narration = (
                             "Какой вариант показать подробнее или добавить в заказ?"
@@ -618,9 +622,12 @@ class OrderAssistantService:
     def _render_catalog(result) -> str:
         products = result.get("products", [])
         query = str(result.get("query") or "").strip()
+        unavailable_item = str(result.get("unavailable_item") or "").strip()
         if not products:
+            if unavailable_item:
+                return f"Товара «{unavailable_item}» сейчас нет в нашем каталоге."
             return f"По запросу «{query}» активных товаров в каталоге не найдено."
-        if result.get("scope") != "full_catalog" and len(products) == 1:
+        if result.get("scope") not in {"full_catalog", "recommendation"} and len(products) == 1:
             product = products[0]
             lines = [
                 product["name"],
@@ -639,7 +646,12 @@ class OrderAssistantService:
                 ),
             ]
             return "\n".join(lines)
-        title = "Полный каталог активных товаров:" if result.get("scope") == "full_catalog" else f"Товары по запросу «{query}»:"
+        if unavailable_item:
+            title = f"Товара «{unavailable_item}» сейчас нет в нашем каталоге. Из близких вариантов могу предложить:"
+        elif result.get("scope") == "recommendation":
+            title = f"По запросу «{query}» могу предложить:"
+        else:
+            title = "Полный каталог активных товаров:" if result.get("scope") == "full_catalog" else f"Товары по запросу «{query}»:"
         lines = [title]
         for product in products:
             lines.append(
@@ -647,6 +659,8 @@ class OrderAssistantService:
                 f"за {product['unit_label'].lower()}; минимальный заказ: "
                 f"{OrderAssistantService._quantity(product['min_quantity'])} {product['unit_label'].lower()}"
             )
+            if result.get("scope") == "recommendation" and product.get("description"):
+                lines.append(f"  {product['description']}")
         if result.get("scope") == "comparison":
             lines.extend(f"{p['name']}: {p.get('description') or 'Описание в каталоге не указано.'}" for p in products)
             units = {p.get("unit") for p in products}

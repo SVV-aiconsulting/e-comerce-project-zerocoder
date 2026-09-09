@@ -416,6 +416,278 @@ def test_consultant_catalog_queries_are_specific_and_support_multiple_categories
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Покажите каталог",
+        "Что у вас есть в продаже?",
+        "Покажите ваши товары",
+        "Что вы продаёте?",
+    ],
+)
+def test_natural_full_catalog_phrases_return_full_catalog(
+    text, customer, settings
+):
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id=f"full-catalog-{abs(hash(text))}",
+        external_user_id="full-catalog-user",
+        conversation_key="full-catalog-dialog",
+        customer=customer,
+        raw_text=text,
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    assert backend.catalog_action() == (
+        "search_products",
+        {"query": "", "limit": 30},
+    )
+
+
+@pytest.mark.django_db
+def test_inflected_specific_alias_does_not_degrade_to_general_alias(
+    customer, settings
+):
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="white-fish-inflected",
+        external_user_id="white-fish-user",
+        conversation_key="white-fish-dialog",
+        customer=customer,
+        raw_text="Что у вас есть из белой рыбы?",
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    action = backend.catalog_action()
+    assert action == ("search_products", {"query": "белая рыба", "limit": 30})
+    result = backend.execute(*action, call_index=1)
+    assert [row["code"] for row in result["products"]] == ["DEMO-COD"]
+
+
+@pytest.mark.django_db
+def test_semantic_catalog_context_contains_complete_product_cards(
+    customer, product
+):
+    product.description = "Описание из актуального каталога"
+    product.save(update_fields=["description", "updated_at"])
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="semantic-catalog-context",
+        external_user_id="semantic-user",
+        conversation_key="semantic-dialog",
+        customer=customer,
+        raw_text="Что есть из моллюсков?",
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    snapshot = AssistantToolExecutor(event=event, draft=draft, turn=turn).context_payload()[
+        "catalog_snapshot"
+    ]
+
+    card = next(row for row in snapshot if row["code"] == product.public_code)
+    assert card["name"] == product.name
+    assert card["description"] == "Описание из актуального каталога"
+    assert "aliases" in card
+    assert card["unit"]
+    assert card["min_quantity"]
+    assert card["price"] == str(product.base_price)
+    assert card["currency"] == "RUB"
+
+
+@pytest.mark.django_db
+def test_semantic_recommendation_returns_only_validated_catalog_cards(
+    customer, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    codes = ["DEMO-SCALLOP", "DEMO-MUSSELS", "DEMO-SQUID", "DEMO-OCTOPUS"]
+    provider = ScriptedProvider([
+        tool("recommend_products", {
+            "query": "моллюски",
+            "product_codes": codes,
+            "unavailable_item": None,
+        }),
+        answer("Какой из вариантов вам больше подходит?"),
+    ])
+    monkeypatch.setattr(
+        "apps.assistant.services.get_gigachat_provider", lambda: provider
+    )
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="semantic-molluscs",
+        external_user_id="semantic-molluscs-user",
+        conversation_key="semantic-molluscs-dialog",
+        customer=customer,
+        raw_text="Что у вас есть из моллюсков?",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    response = InboundEventResponseService.present(event)["response"]["message"]
+
+    for name in ("Гребешок морской", "Мидии в створках", "Кальмар очищенный", "Осьминог"):
+        assert name in response
+    assert "Краб камчатский" not in response
+    assert "Морской еж" not in response
+
+
+@pytest.mark.django_db
+def test_unavailable_product_names_absence_and_real_alternative(
+    customer, settings, monkeypatch
+):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    provider = ScriptedProvider([
+        tool("recommend_products", {
+            "query": "пикша",
+            "product_codes": ["DEMO-COD"],
+            "unavailable_item": "пикша",
+        }),
+        answer("Подойдёт треска или подобрать по другому критерию?"),
+    ])
+    monkeypatch.setattr(
+        "apps.assistant.services.get_gigachat_provider", lambda: provider
+    )
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="unavailable-haddock",
+        external_user_id="unavailable-user",
+        conversation_key="unavailable-dialog",
+        customer=customer,
+        raw_text="Есть ли у вас пикша?",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    response = InboundEventResponseService.present(event)["response"]["message"]
+
+    assert "«пикша» сейчас нет" in response
+    assert "Треска" in response
+    assert "Лосось" not in response
+
+
+@pytest.mark.django_db
+def test_multiple_items_without_conjunction_keep_each_quantity(
+    customer, settings
+):
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="multi-without-conjunction",
+        external_user_id="multi-without-conjunction-user",
+        conversation_key="multi-without-conjunction-dialog",
+        customer=customer,
+        raw_text="тунец 1 кг осьминог 2 кг",
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    actions = AssistantToolExecutor(event=event, draft=draft, turn=turn).cart_mutation_actions()
+
+    assert actions == [
+        ("set_cart_item", {"product_code": "DEMO-TUNA", "quantity": 1.0}),
+        ("set_cart_item", {"product_code": "DEMO-OCTOPUS", "quantity": 2.0}),
+    ]
+
+
+@pytest.mark.django_db
+def test_multiple_named_items_without_quantities_are_kept_for_followup(
+    customer, settings
+):
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="multi-selection-no-quantity",
+        external_user_id="multi-selection-user",
+        conversation_key="multi-selection-dialog",
+        customer=customer,
+        raw_text="Хочу заказать тунца и осьминога",
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    action = backend.catalog_action()
+    assert action == (
+        "search_products",
+        {"query": "Осьминог | Тунец", "limit": 30},
+    )
+    result = backend.execute(*action, call_index=1)
+    assert result["scope"] == "selection"
+    assert {row["code"] for row in result["products"]} == {
+        "DEMO-TUNA",
+        "DEMO-OCTOPUS",
+    }
+
+
+@pytest.mark.django_db
+def test_known_and_unknown_quantified_items_are_not_partially_applied(
+    customer, settings
+):
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="known-unknown-items",
+        external_user_id="known-unknown-user",
+        conversation_key="known-unknown-dialog",
+        customer=customer,
+        raw_text="Добавьте треску 1 кг и пикшу 1 кг",
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    assert backend.cart_mutation_actions() is None
+    assert draft.items.count() == 0
+
+
+@pytest.mark.django_db
 def test_consultant_adds_each_explicit_product_quantity_without_model_guess(
     customer, settings, monkeypatch
 ):

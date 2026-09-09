@@ -25,6 +25,7 @@ from apps.assistant.schemas import (
     EmptyArgs,
     ListOrdersArgs,
     PaymentLinkArgs,
+    RecommendProductsArgs,
     RemoveCartItemArgs,
     RepeatOrderArgs,
     SearchProductsArgs,
@@ -105,6 +106,11 @@ def _provider_compatible_schema(value):
 TOOL_SPECS = (
     ToolSpec("compare_products", "Сравнить 2–4 найденных товара по актуальным карточкам каталога.", CompareProductsArgs),
     ToolSpec("search_products", "Показать весь активный каталог при пустом query или найти товары по названию, виду и синониму.", SearchProductsArgs),
+    ToolSpec(
+        "recommend_products",
+        "Подобрать товары по смыслу запроса из полного catalog_snapshot. Передай только коды реально подходящих товаров; если явно запрошенного товара нет, укажи его в unavailable_item и предложи близкие варианты.",
+        RecommendProductsArgs,
+    ),
     ToolSpec("get_cart", "Получить актуальный состав AI-корзины и состояние оформления.", EmptyArgs),
     ToolSpec("set_cart_item", "Добавить товар по коду или установить его количество.", SetCartItemArgs, True),
     ToolSpec("remove_cart_item", "Удалить товар из AI-корзины по коду.", RemoveCartItemArgs, True),
@@ -300,12 +306,68 @@ class AssistantToolExecutor:
         ranked = exact_matches or literal_matches or fuzzy_matches
         ranked.sort(key=lambda row: (-row[0], -row[1], row[2].sort_order, row[2].name))
         products = [self._product_payload(row[2]) for row in ranked[: args.limit]]
+        selection_request = bool(
+            len(query_parts) > 1
+            and re.search(
+                r"\b(?:заказ\w*|закаж\w*|добав\w*|возьм\w*|хоч\w*)\b",
+                normalize_product_text(self.event.raw_text),
+            )
+        )
         return {
             "ok": True,
             "query": args.query,
-            "scope": "full_catalog" if not query else "filtered",
+            "scope": (
+                "full_catalog" if not query
+                else "selection" if selection_request
+                else "filtered"
+            ),
             "products": products,
             "count": len(products),
+        }
+
+    def _tool_recommend_products(self, args: RecommendProductsArgs) -> dict:
+        """Возвращает только актуальные карточки выбранных моделью кодов.
+
+        Модель выполняет смысловую классификацию, но не формирует факты о
+        товарах. Backend повторно проверяет коды, активность и утверждение об
+        отсутствии конкретного товара перед тем, как показать результат.
+        """
+        requested_codes = list(dict.fromkeys(args.product_codes))
+        products = list(
+            CatalogService.get_active_products()
+            .filter(public_code__in=requested_codes)
+            .prefetch_related("aliases")
+        )
+        by_code = {product.public_code: product for product in products}
+        invalid_codes = [code for code in requested_codes if code not in by_code]
+        if invalid_codes:
+            return {
+                "ok": False,
+                "error": {
+                    "code": "invalid_catalog_selection",
+                    "message": "Подбор содержит товар, которого нет в актуальном каталоге. Повторите подбор по catalog_snapshot.",
+                },
+            }
+
+        unavailable_item = (args.unavailable_item or "").strip()
+        if unavailable_item:
+            normalized_unavailable = normalize_product_text(unavailable_item)
+            directly_available = any(
+                self._variant_is_mentioned(normalized_unavailable, variant)
+                for product in CatalogService.get_active_products().prefetch_related("aliases")
+                for variant in (product.name, *(alias.alias for alias in product.aliases.all()))
+            )
+            if directly_available:
+                unavailable_item = ""
+
+        ordered = [by_code[code] for code in requested_codes]
+        return {
+            "ok": True,
+            "query": args.query,
+            "scope": "recommendation",
+            "unavailable_item": unavailable_item,
+            "products": [self._product_payload(product) for product in ordered],
+            "count": len(ordered),
         }
 
     @staticmethod
@@ -313,15 +375,21 @@ class AssistantToolExecutor:
         """Сопоставляет простые русские словоформы без отдельного NLP-пакета."""
         if left == right:
             return True
-        shortest = min(len(left), len(right))
-        if shortest < 4:
-            return False
-        common = 0
-        for left_char, right_char in zip(left, right):
-            if left_char != right_char:
-                break
-            common += 1
-        return common >= max(3, min(5, shortest - 1))
+        endings = (
+            "иями", "ями", "ами", "его", "ого", "ему", "ому", "ими", "ыми",
+            "ая", "яя", "ой", "ей", "ую", "юю", "ов", "ев", "ах", "ях",
+            "ом", "ем", "ы", "и", "а", "я", "у", "ю",
+        )
+
+        def stem(value):
+            for ending in endings:
+                if value.endswith(ending) and len(value) - len(ending) >= 3:
+                    return value[:-len(ending)]
+            return value
+
+        if stem(left) == stem(right):
+            return True
+        return False
 
     @classmethod
     def _variant_is_mentioned(cls, text: str, variant: str) -> bool:
@@ -358,15 +426,28 @@ class AssistantToolExecutor:
     def catalog_action(self):
         """Детерминированно направляет вопросы о каталоге в источник истины."""
         text = normalize_product_text(self.event.raw_text)
-        if re.search(r"\b(?:заказ\w*|корзин\w*)\b", text):
-            return None
         products = self._mentioned_products(text)
         exact_aliases = [
             alias.alias
             for product in CatalogService.get_active_products().prefetch_related("aliases")
             for alias in product.aliases.all()
-            if normalize_product_text(alias.alias) in text
+            if self._variant_is_mentioned(text, alias.alias)
         ]
+        if re.search(r"\b(?:заказ\w*|корзин\w*)\b", text):
+            if len(products) >= 2 and not self._quantity_values(self.event.raw_text):
+                return "search_products", {
+                    "query": " | ".join(product.name for product in products),
+                    "limit": 30,
+                }
+            return None
+        full_catalog_request = bool(
+            re.search(r"\b(?:каталог\w*|ассортимент\w*)\b", text)
+            or re.search(r"\bпокаж\w*\b.*\b(?:все\s+)?(?:ваш\w*\s+)?товар\w*\b", text)
+            or re.search(r"\bчто\s+у\s+вас\s+есть\s+в\s+продаж\w*\b", text)
+            or re.search(r"\bчто\s+(?:вы\s+)?прода[её]те\b", text)
+        )
+        if full_catalog_request and not products and not exact_aliases:
+            return "search_products", {"query": "", "limit": 30}
         catalog_question = bool(
             re.search(
                 r"\b(?:каталог\w*|ассортимент\w*|продаж\w*|описан\w*|"
@@ -402,9 +483,19 @@ class AssistantToolExecutor:
                     for other in unique_aliases
                 )
             ]
-            query = " | ".join(
-                sorted(specific_aliases, key=lambda value: text.index(normalize_product_text(value)))
-            )
+            text_words = text.split()
+
+            def alias_position(value):
+                first = normalize_product_text(value).split()[0]
+                for index, word in enumerate(text_words):
+                    if self._word_matches(first, word) or (
+                        min(len(first), len(word)) >= 5
+                        and SequenceMatcher(None, first, word).ratio() >= 0.75
+                    ):
+                        return index
+                return len(text_words)
+
+            query = " | ".join(sorted(specific_aliases, key=alias_position))
         elif products:
             names = {product.name for product in products}
             if len(names) == 1:
@@ -418,7 +509,7 @@ class AssistantToolExecutor:
                     if self._variant_is_mentioned(text, alias.alias)
                 ]
                 query = max(aliases, key=len) if aliases else ""
-        else:
+        elif not settings.AI_CONSULTANT_ENABLED:
             subject = re.search(
                 r"\b(?:есть|имеется|прода\w*)\b\s+(.+)$",
                 text,
@@ -429,6 +520,11 @@ class AssistantToolExecutor:
                 query = text[2:].strip()
             else:
                 query = ""
+        else:
+            # Категории и свойства, которых нет среди управляемых синонимов,
+            # анализирует модель по полному catalog_snapshot. Пустой буквальный
+            # поиск здесь лишил бы её возможности подобрать реальные аналоги.
+            return None
         return "search_products", {"query": query, "limit": 30}
 
     @staticmethod
@@ -482,9 +578,12 @@ class AssistantToolExecutor:
         clauses = re.split(r"\s+(?:и|а\s+также)\s+|[;,]", raw_text, flags=re.I)
         actions = []
         seen_codes = set()
+        quantity_clause_count = 0
         for clause in clauses:
             products = self._mentioned_products(clause)
             quantities = self._quantity_values(clause)
+            if quantities:
+                quantity_clause_count += 1
             if len(products) != 1 or not quantities:
                 continue
             product = products[0]
@@ -501,8 +600,46 @@ class AssistantToolExecutor:
             )
             seen_codes.add(product.public_code)
 
-        if actions:
+        if actions and len(actions) == quantity_clause_count:
             return actions
+
+        # В живой речи союз часто опускают: «тунец 1 кг осьминог 2 кг».
+        # Привязываем число к следующему упомянутому товару по границам между
+        # названиями, а не к первой позиции всего сообщения.
+        normalized = normalize_product_text(raw_text)
+        positioned = []
+        for product in self._mentioned_products(normalized):
+            words = normalized.split()
+            variants = [product.name, *(alias.alias for alias in product.aliases.all())]
+            positions = []
+            for variant in variants:
+                first = normalize_product_text(variant).split()[0]
+                for index, word in enumerate(words):
+                    if self._word_matches(first, word) or (
+                        min(len(first), len(word)) >= 5
+                        and SequenceMatcher(None, first, word).ratio() >= 0.75
+                    ):
+                        positions.append(index)
+                        break
+            if positions:
+                positioned.append((min(positions), product))
+        positioned.sort(key=lambda row: row[0])
+        words = normalized.split()
+        if len(positioned) >= 2:
+            paired_actions = []
+            paired_codes = set()
+            for index, (start, product) in enumerate(positioned):
+                end = positioned[index + 1][0] if index + 1 < len(positioned) else len(words)
+                quantities = self._quantity_values(" ".join(words[start:end]))
+                if not quantities or product.public_code in paired_codes:
+                    continue
+                paired_actions.append((
+                    "set_cart_item",
+                    {"product_code": product.public_code, "quantity": float(quantities[0])},
+                ))
+                paired_codes.add(product.public_code)
+            if len(paired_actions) == len(positioned):
+                return paired_actions
 
         # Follow-up like "2 кг" after a single server-backed product card.
         from apps.intake.models import ConversationMemory
@@ -1063,8 +1200,14 @@ class AssistantToolExecutor:
         )
         catalog_terms = [
             {
+                "code": product.public_code,
                 "name": product.name,
+                "description": product.description,
                 "aliases": [alias.alias for alias in product.aliases.all()],
+                "unit": product.get_unit_display().lower(),
+                "min_quantity": str(product.min_quantity),
+                "price": str(product.base_price),
+                "currency": "RUB",
             }
             for product in CatalogService.get_active_products().prefetch_related("aliases")
         ]
@@ -1076,9 +1219,9 @@ class AssistantToolExecutor:
                 "selected_product_code": memory.selected_product_code, "expected_fields": memory.expected_fields} if memory else {},
             "cart": self._cart_payload(),
             "recent_product_search": recent_search or None,
-            # Только словарь сопоставления. Цены, наличие и описания модель всё
-            # равно обязана получить отдельным search_products в текущем ходе.
-            "catalog_vocabulary": catalog_terms,
+            # Полный снимок нужен только для смыслового выбора кодов. Цены и
+            # наличие перед ответом всё равно перечитывает backend-инструмент.
+            "catalog_snapshot": catalog_terms,
         }
 
     def _visible_orders(self):
