@@ -38,6 +38,9 @@ Thumbs.db
 # Local reports/notes
 report*.md
 
+# The graduation technical specification is submitted separately.
+/docs/TECHNICAL_SPECIFICATION.md
+
 # Local service data
 .local/
 
