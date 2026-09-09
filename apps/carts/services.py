@@ -85,9 +85,12 @@ class CartService:
         cart.customer_comment = ""
         cart.contact_phone = ""
         cart.contact_email = ""
+        cart.desired_date = None
+        cart.desired_time_interval = ""
         cart.save(update_fields=[
             "receiving_type", "delivery_address", "payment_method",
-            "customer_comment", "contact_phone", "contact_email", "updated_at",
+            "customer_comment", "contact_phone", "contact_email",
+            "desired_date", "desired_time_interval", "updated_at",
         ])
 
     @staticmethod

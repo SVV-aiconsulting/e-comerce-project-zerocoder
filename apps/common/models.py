@@ -10,3 +10,8 @@ class TimeStampedModel(models.Model):
 
     class Meta:
         abstract = True
+
+
+class ServiceHeartbeat(models.Model):
+    name = models.CharField(max_length=128, unique=True)
+    last_seen_at = models.DateTimeField()

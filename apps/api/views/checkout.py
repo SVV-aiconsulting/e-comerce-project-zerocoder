@@ -36,22 +36,23 @@ class CheckoutPreviewView(APIView):
             external_user_id=data["external_user_id"],
             customer=customer,
         )
-        preview = CheckoutDeliveryService.preview(
-            cart=cart,
-            customer=customer,
-            receiving_type=data["receiving_type"],
-            delivery_address=data.get("delivery_address", ""),
-            payment_method=data.get("payment_method"),
-        )
-        cart.receiving_type = data["receiving_type"]
-        cart.delivery_address = data.get("delivery_address", "")
-        # payment_method в предварительном запросе доставки может быть
-        # техническим значением тарифа. Реальный выбор сохраняет state endpoint.
-        cart.save(update_fields=["receiving_type", "delivery_address", "updated_at"])
+        for field in cart.CHECKOUT_FIELDS:
+            if field in data:
+                setattr(cart, field, data[field])
+        cart.contact_phone = data.get("contact_phone") or cart.contact_phone or customer.phone
+        cart.contact_email = data.get("contact_email") or cart.contact_email or customer.email
+        cart.save(update_fields=[*cart.CHECKOUT_FIELDS, "updated_at"])
+        preview = CheckoutDeliveryService.preview(cart=cart, customer=customer,
+            receiving_type=cart.receiving_type, delivery_address=cart.delivery_address,
+            payment_method=cart.payment_method)
+        from apps.carts.checkout import CheckoutService
+        snapshot = CheckoutService.record(cart=cart, customer=customer, result=preview)
         totals = preview.totals
         quote = preview.quote
 
         response_data = {
+            "preview_id": str(snapshot.public_id),
+            "expires_at": snapshot.expires_at,
             "items_total": totals.items_total,
             "discount_amount": totals.discount_amount,
             "delivery_cost": totals.delivery_cost,
@@ -82,6 +83,8 @@ class CheckoutStateView(APIView):
             "customer_comment": cart.customer_comment,
             "contact_phone": cart.contact_phone,
             "contact_email": cart.contact_email,
+            "desired_date": cart.desired_date,
+            "desired_time_interval": cart.desired_time_interval,
         }
 
     def patch(self, request):
@@ -105,6 +108,8 @@ class CheckoutStateView(APIView):
             "payment_method",
             "customer_comment",
             "contact_email",
+            "desired_date",
+            "desired_time_interval",
         ):
             if field in data and data[field] != getattr(cart, field):
                 setattr(cart, field, data[field])

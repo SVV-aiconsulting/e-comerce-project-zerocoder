@@ -35,11 +35,16 @@ class InboundEventService:
     """Приём события с защитой от повторной доставки каналом."""
 
     @staticmethod
+    @transaction.atomic
     def register(**event_data) -> EventRegistrationResult:
         lookup = {
             "channel": event_data.pop("channel"),
             "external_event_id": event_data.pop("external_event_id"),
         }
+        from django.conf import settings
+        if settings.INTAKE_ADMISSION_ENABLED and not InboundEvent.objects.filter(**lookup).exists():
+            from apps.intake.admission import check_admission
+            check_admission(lookup["channel"], event_data.get("external_user_id", ""))
         event, created = InboundEvent.objects.get_or_create(
             **lookup,
             defaults=event_data,
@@ -83,7 +88,16 @@ class InboundEventService:
             logger.warning("Не удалось опубликовать InboundEvent id=%s", event_id)
             return False
 
-        InboundEvent.objects.filter(pk=event_id).update(next_retry_at=None)
+        # Keep a publication lease while the message waits in Redis. If Redis
+        # loses it, the dispatcher republishes after the lease instead of every
+        # scheduler tick; a worker clears this field when it claims the event.
+        InboundEvent.objects.filter(
+            pk=event_id,
+            status=InboundEventStatus.QUEUED,
+        ).update(
+            next_retry_at=timezone.now()
+            + timedelta(seconds=settings.INTAKE_EVENT_LEASE_SECONDS)
+        )
         return True
 
 

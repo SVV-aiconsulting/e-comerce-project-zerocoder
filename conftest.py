@@ -70,3 +70,10 @@ def active_cart(db, customer):
         external_user_id="12345",
         customer=customer,
     )
+
+
+@pytest.fixture(autouse=True)
+def isolated_admission_policy(settings):
+    # Business fixtures intentionally register multiple unprocessed messages.
+    # Admission/rate tests explicitly enable the public policy themselves.
+    settings.INTAKE_ADMISSION_ENABLED = False

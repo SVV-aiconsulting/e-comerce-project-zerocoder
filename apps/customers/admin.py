@@ -327,3 +327,57 @@ class CustomerIdentityConflictAdmin(admin.ModelAdmin):
             obj.resolved_at = None
             obj.resolved_by = None
         super().save_model(request, obj, form, change)
+
+
+from apps.customers.models import WebAccount, OrderAccessGrant, HistoryLinkRequest
+
+@admin.register(WebAccount)
+class WebAccountAdmin(admin.ModelAdmin):
+    list_display = ("email", "name", "verified_at")
+    readonly_fields = ("email", "user", "verified_at", "phone_login", "basket_user_id")
+    def has_add_permission(self, request):
+        return False
+
+@admin.register(OrderAccessGrant)
+class OrderAccessGrantAdmin(admin.ModelAdmin):
+    list_display = ("order", "account", "reason", "granted_by", "created_at")
+    readonly_fields = ("order", "account", "reason", "granted_by", "created_at", "updated_at")
+    def has_add_permission(self, request):
+        return False
+
+@admin.register(HistoryLinkRequest)
+class HistoryLinkRequestAdmin(admin.ModelAdmin):
+    list_display = ("account", "order", "status", "reason")
+    readonly_fields = ("account", "order", "status")
+    actions = ("approve_links", "reject_links")
+
+    @admin.action(description="Подтвердить связи с указанной причиной")
+    def approve_links(self, request, queryset):
+        from django.db import transaction
+        for candidate in queryset.filter(status="pending"):
+            with transaction.atomic():
+                row = HistoryLinkRequest.objects.select_for_update().get(pk=candidate.pk)
+                if not row.reason.strip():
+                    self.message_user(request, "Сначала укажите причину подтверждения.", level=messages.ERROR)
+                    continue
+                from apps.orders.models import Order
+                Order.objects.select_for_update().get(pk=row.order_id)
+                grant, _ = OrderAccessGrant.objects.get_or_create(order=row.order,
+                    defaults={"account": row.account, "reason": row.reason, "granted_by": request.user})
+                if grant.account_id != row.account_id:
+                    self.message_user(request, "Заказ уже связан с другим аккаунтом.", level=messages.ERROR)
+                    continue
+                row.status = "approved"
+                row.save(update_fields=["status", "updated_at"])
+
+    @admin.action(description="Отклонить связи")
+    def reject_links(self, request, queryset):
+        missing_reason = queryset.filter(status="pending", reason="").exists()
+        if missing_reason:
+            self.message_user(
+                request,
+                "Сначала укажите причину отклонения для каждой связи.",
+                level=messages.ERROR,
+            )
+            return
+        queryset.filter(status="pending").update(status="rejected")

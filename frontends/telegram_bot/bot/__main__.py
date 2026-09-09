@@ -30,6 +30,15 @@ def create_bot(settings) -> Bot:
     )
 
 
+async def heartbeat_loop(api):
+    while True:
+        try:
+            await api.heartbeat()
+        except Exception:
+            logger.warning("Backend heartbeat unavailable")
+        await asyncio.sleep(30)
+
+
 async def main() -> None:
     settings = get_settings()
     setup_logging(settings.telegram_bot_log_level)
@@ -41,6 +50,7 @@ async def main() -> None:
     )
 
     await on_startup(api_client)
+    heartbeat_task = asyncio.create_task(heartbeat_loop(api_client))
 
     bot = create_bot(settings)
     dp = create_dispatcher(settings, api_client)

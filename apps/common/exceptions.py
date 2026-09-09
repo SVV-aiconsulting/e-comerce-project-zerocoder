@@ -5,6 +5,11 @@ class ShopError(Exception):
     """Базовое исключение для ошибок бизнес-логики магазина."""
 
 
+class PreviewStaleError(ShopError):
+    def __init__(self, message="Условия заказа изменились. Рассчитайте итог и подтвердите его заново."):
+        super().__init__(message)
+
+
 class ProductUnavailableError(ShopError):
     """Товар неактивен или недоступен для заказа."""
 
@@ -34,3 +39,9 @@ class ChannelIdentityAlreadyLinkedError(ShopError):
 
 class CartNotAvailableError(ShopError):
     """Корзина уже оформлена или недоступна для заказа."""
+
+
+class IntakeRateLimited(ShopError):
+    def __init__(self, retry_after=60):
+        self.retry_after = retry_after
+        super().__init__("Слишком много сообщений. Дождитесь ответа и попробуйте позже.")

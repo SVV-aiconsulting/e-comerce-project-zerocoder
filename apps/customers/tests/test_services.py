@@ -262,7 +262,7 @@ def test_website_customer_uses_unique_contact_match(customer):
     assert result.is_new_customer is False
     assert result.customer == customer
     customer.refresh_from_db()
-    assert customer.email == "ivan@example.com"
+    assert customer.email == ""  # Guest contact must not overwrite the existing CRM identity.
 
 
 @pytest.mark.django_db

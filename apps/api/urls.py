@@ -3,7 +3,7 @@ from django.urls import path
 from apps.api.views.cart import CartClearView, CartItemView, CartView
 from apps.api.views.catalog import ProductDetailView, ProductListView
 from apps.api.views.checkout import CheckoutPreviewView, CheckoutStateView
-from apps.api.views.health import HealthCheckView
+from apps.api.views.health import HealthCheckView, ReadinessView, HeartbeatView
 from apps.api.views.identify import IdentifyCustomerView
 from apps.api.views.intake import InboundEventDetailView, InboundEventView
 from apps.api.views.meta import MetaView
@@ -12,6 +12,8 @@ from apps.api.views.payments import CreatePaymentView, YooKassaWebhookView
 from apps.api.views.privacy import ConsentStatusView
 
 urlpatterns = [
+    path("ready/", ReadinessView.as_view()),
+    path("internal/heartbeat/", HeartbeatView.as_view()),
     path("health/", HealthCheckView.as_view(), name="health-check"),
     path("meta/", MetaView.as_view(), name="meta"),
     path("products/", ProductListView.as_view(), name="product-list"),

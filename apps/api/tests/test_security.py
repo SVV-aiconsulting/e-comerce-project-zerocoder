@@ -1,3 +1,4 @@
+from apps.api.tests.checkout_helpers import confirmed_post
 """Тесты безопасности REST API (IDOR, customer context)."""
 from decimal import Decimal
 
@@ -147,7 +148,7 @@ def test_cart_customer_mismatch_when_cart_already_bound(
 @pytest.mark.django_db
 def test_order_detail_idor_denied(api_client, customer, other_customer, product, active_cart, delivery_rule):
     CartService.set_item_quantity(active_cart, product, Decimal("1"))
-    create_response = api_client.post(
+    create_response = confirmed_post(api_client,
         "/api/orders/",
         {
             "channel": Channel.TELEGRAM,
@@ -172,7 +173,7 @@ def test_order_detail_idor_denied(api_client, customer, other_customer, product,
 @pytest.mark.django_db
 def test_customer_orders_idor_denied(api_client, customer, other_customer, product, active_cart, delivery_rule):
     CartService.set_item_quantity(active_cart, product, Decimal("1"))
-    api_client.post(
+    confirmed_post(api_client,
         "/api/orders/",
         {
             "channel": Channel.TELEGRAM,

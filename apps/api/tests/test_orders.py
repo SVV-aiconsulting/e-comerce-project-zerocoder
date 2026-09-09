@@ -1,3 +1,4 @@
+from apps.api.tests.checkout_helpers import confirmed_post
 """Тесты заказов REST API."""
 from decimal import Decimal
 
@@ -26,7 +27,7 @@ def api_client(settings):
 def test_create_order(api_client, customer, product, active_cart, delivery_rule):
     CartService.set_item_quantity(active_cart, product, Decimal("2"))
 
-    response = api_client.post(
+    response = confirmed_post(api_client,
         "/api/orders/",
         {
             "channel": Channel.TELEGRAM,
@@ -52,7 +53,7 @@ def test_online_order_keeps_email_for_yookassa_receipt(
 ):
     CartService.set_item_quantity(active_cart, product, Decimal("1"))
 
-    response = api_client.post(
+    response = confirmed_post(api_client,
         "/api/orders/",
         {
             "channel": Channel.TELEGRAM,
@@ -72,7 +73,7 @@ def test_online_order_keeps_email_for_yookassa_receipt(
 @pytest.mark.django_db
 def test_get_order_by_number(api_client, customer, product, active_cart, delivery_rule):
     CartService.set_item_quantity(active_cart, product, Decimal("1"))
-    create_response = api_client.post(
+    create_response = confirmed_post(api_client,
         "/api/orders/",
         {
             "channel": Channel.TELEGRAM,
@@ -97,7 +98,7 @@ def test_get_order_by_number(api_client, customer, product, active_cart, deliver
 @pytest.mark.django_db
 def test_customer_orders_list(api_client, customer, product, active_cart, delivery_rule):
     CartService.set_item_quantity(active_cart, product, Decimal("1"))
-    api_client.post(
+    confirmed_post(api_client,
         "/api/orders/",
         {
             "channel": Channel.TELEGRAM,
@@ -119,7 +120,7 @@ def test_customer_orders_list(api_client, customer, product, active_cart, delive
 
 
 @pytest.mark.django_db
-def test_create_order_twice_returns_empty_cart(api_client, customer, product, active_cart, delivery_rule):
+def test_create_order_twice_returns_same_order(api_client, customer, product, active_cart, delivery_rule):
     CartService.set_item_quantity(active_cart, product, Decimal("1"))
     payload = {
         "channel": Channel.TELEGRAM,
@@ -128,11 +129,14 @@ def test_create_order_twice_returns_empty_cart(api_client, customer, product, ac
         "receiving_type": ReceivingType.PICKUP,
         "payment_method": PaymentMethod.CASH_ON_DELIVERY,
     }
-    api_client.post("/api/orders/", payload, format="json")
+    preview = api_client.post("/api/checkout/preview/", payload, format="json")
+    payload["preview_id"] = str(preview.data["preview_id"])
+    first = api_client.post("/api/orders/", payload, format="json")
     response = api_client.post("/api/orders/", payload, format="json")
 
-    assert response.status_code == 422
-    assert response.data["error"]["code"] == "empty_cart"
+    assert response.status_code == 201
+    assert response.data["public_number"] == first.data["public_number"]
+    assert Order.objects.count() == 1
 
 
 @pytest.mark.django_db
@@ -155,7 +159,7 @@ def test_create_order_keeps_confirmed_yandex_quote(
         amount=Decimal("444.00"),
     )
 
-    response = api_client.post(
+    response = confirmed_post(api_client,
         "/api/orders/",
         {
             "channel": Channel.TELEGRAM,

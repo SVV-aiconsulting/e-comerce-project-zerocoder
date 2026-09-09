@@ -20,6 +20,8 @@ from apps.orders.pricing import OrderTotals, PricingService
 class CheckoutDeliveryPreview:
     totals: OrderTotals
     quote: DeliveryQuote | None = None
+    cart_revision: int = 0
+    cart_signature: list[dict] | None = None
 
 
 def normalize_delivery_address(value: str) -> str:
@@ -48,6 +50,11 @@ class CheckoutDeliveryService:
         delivery_address: str = "",
         payment_method: str = PaymentMethod.CARD_PREPAYMENT,
     ) -> CheckoutDeliveryPreview:
+        cart.refresh_from_db()
+        revision = cart.revision
+        from apps.carts.checkout import CheckoutService
+
+        signature = CheckoutService.signature(cart)
         CartService.validate_cart_for_order(cart)
         cart_items = list(CartService.get_contents(cart))
         if customer is None:
@@ -73,7 +80,11 @@ class CheckoutDeliveryService:
                 totals.discount_amount,
                 totals.delivery_cost,
             )
-            return CheckoutDeliveryPreview(totals=totals)
+            return CheckoutDeliveryPreview(
+                totals=totals,
+                cart_revision=revision,
+                cart_signature=signature,
+            )
 
         address = normalize_delivery_address(delivery_address)
         if settings.YANDEX_DELIVERY_ENABLED:
@@ -99,9 +110,18 @@ class CheckoutDeliveryService:
                 totals.discount_amount,
                 totals.delivery_cost,
             )
-            return CheckoutDeliveryPreview(totals=totals, quote=quote)
+            return CheckoutDeliveryPreview(
+                totals=totals,
+                quote=quote,
+                cart_revision=revision,
+                cart_signature=signature,
+            )
 
-        return CheckoutDeliveryPreview(totals=totals)
+        return CheckoutDeliveryPreview(
+            totals=totals,
+            cart_revision=revision,
+            cart_signature=signature,
+        )
 
     @staticmethod
     def selected_quote(

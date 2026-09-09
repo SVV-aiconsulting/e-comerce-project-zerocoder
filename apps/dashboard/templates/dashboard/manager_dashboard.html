@@ -84,6 +84,9 @@
     </div>
   </div>
 
+  <h2>Работа сервисов</h2>
+  {% for pulse in heartbeats %}<p>{{ pulse.name }}: {% if pulse.stale %}давно нет сигнала{% else %}на связи{% endif %} · {{ pulse.last_seen_at|date:"d.m.Y H:i:s" }}</p>{% empty %}<p>Сигналы сервисов ещё не получены.</p>{% endfor %}
+  {% if oldest_pending %}<p>Самая ранняя незавершённая заявка: {{ oldest_pending|date:"d.m.Y H:i:s" }}</p>{% endif %}
   <h2>Очередь внимания ({{ attention|length }})</h2>
   {% if attention_counts %}<p>{% for category, count in attention_counts.items %}{{ category }}: {{ count }}{% if not forloop.last %} · {% endif %}{% endfor %}</p>{% endif %}
   <table class="dashboard-table">

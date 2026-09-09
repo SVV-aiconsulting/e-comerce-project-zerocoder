@@ -61,3 +61,7 @@ class ClearCartArgs(StrictToolArgs):
 class CancelOrderArgs(StrictToolArgs):
     order_number: str = Field(min_length=1, max_length=32)
     confirmation: Literal["cancel_placed_order"]
+
+
+class CompareProductsArgs(StrictToolArgs):
+    product_codes: list[str] = Field(min_length=2, max_length=4)

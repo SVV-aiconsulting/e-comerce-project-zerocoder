@@ -200,3 +200,6 @@ class YooKassaClient:
         return self._request(
             "POST", "/refunds", payload=payload, idempotence_key=idempotence_key
         )
+
+    def get_refund(self, external_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/refunds/{external_id}")

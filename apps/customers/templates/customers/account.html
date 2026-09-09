@@ -1,0 +1,75 @@
+{% load static %}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Личный кабинет · WebMarket</title>
+  <link rel="stylesheet" href="{% static 'website/css/storefront.css' %}?v=20260908">
+</head>
+<body class="account-page">
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/"><span class="brand-mark">WebMarket</span><span class="brand-tag">Море</span></a>
+      <a class="btn btn-ghost" href="/">Вернуться в магазин</a>
+    </div>
+  </header>
+  <main class="account-shell">
+    <section class="account-intro">
+      <p class="eyebrow">Профиль покупателя</p>
+      <h1>Личный кабинет</h1>
+      <p class="lead">Покупать можно без регистрации. Вход по коду открывает подтверждённую историю заказов на любом устройстве.</p>
+    </section>
+    <div class="account-grid">
+      <section class="panel account-card" aria-labelledby="access-title">
+        <h2 id="access-title">Доступ</h2>
+        <form id="login-form" class="account-form">
+          {% csrf_token %}
+          <label for="account-identifier">Email или телефон</label>
+          <input id="account-identifier" class="field-input" name="identifier" autocomplete="username" required maxlength="320">
+          <button class="btn btn-primary">Получить код на email</button>
+        </form>
+        <form id="code-form" class="account-form" hidden>
+          <label for="account-code">Код из письма</label>
+          <input id="account-code" class="field-input" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+          <button class="btn btn-primary">Подтвердить</button>
+        </form>
+        <section id="profile" hidden>
+          <p class="account-email" id="email"></p>
+          <form id="profile-form" class="account-form">
+            <label for="account-name">Имя</label>
+            <input id="account-name" class="field-input" name="name" maxlength="255">
+            <label for="account-phone">Телефон для входа</label>
+            <input id="account-phone" class="field-input" name="phone_login" autocomplete="tel">
+            <p class="account-hint">Код всегда приходит на подтверждённый email. Телефон сам по себе не открывает историю.</p>
+            <button class="btn btn-primary">Сохранить профиль</button>
+          </form>
+          <form id="email-form" class="account-form account-form--separated">
+            <label for="account-new-email">Новый email</label>
+            <input id="account-new-email" class="field-input" name="identifier" type="email" autocomplete="email" maxlength="320" required>
+            <button class="btn btn-ghost">Подтвердить новый email</button>
+          </form>
+          <button class="account-logout" id="logout">Выйти из кабинета</button>
+          <p class="account-hint" id="history-status"></p>
+        </section>
+        <p class="account-notice" id="notice" role="status" aria-live="polite"></p>
+      </section>
+      <section class="panel account-card" aria-labelledby="orders-title">
+        <div class="account-card__heading">
+          <div><p class="eyebrow">CRM</p><h2 id="orders-title">Ваши заказы</h2></div>
+          <span class="account-lock">Защищённая история</span>
+        </div>
+        <section id="basket-choice" class="basket-choice" hidden>
+          <h3>У вас две корзины</h3>
+          <p>Выберите одну для продолжения. Количества автоматически не объединяются.</p>
+          <button class="btn btn-ghost" data-choice="guest">Оставить корзину браузера</button>
+          <button class="btn btn-primary" data-choice="account">Использовать сохранённую</button>
+        </section>
+        <div id="orders" class="account-orders"></div>
+        <pre id="order-detail" class="order-detail"></pre>
+      </section>
+    </div>
+  </main>
+  <script src="{% static 'website/js/account.js' %}" defer></script>
+</body>
+</html>

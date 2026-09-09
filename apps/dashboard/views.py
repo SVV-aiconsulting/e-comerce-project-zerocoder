@@ -274,7 +274,14 @@ def manager_dashboard(request: HttpRequest) -> HttpResponse:
     delivery_count = orders.filter(receiving_type="delivery").count()
     new_customer_orders = orders.filter(is_new_customer=True).count()
 
+    from apps.common.models import ServiceHeartbeat
+    heartbeats = list(ServiceHeartbeat.objects.order_by("name"))
+    for pulse in heartbeats:
+        pulse.stale = pulse.last_seen_at < timezone.now() - timedelta(seconds=120)
+    oldest = InboundEvent.objects.filter(status__in=["received", "queued", "processing", "retry_scheduled"]).order_by("created_at").first()
     context = {
+        "heartbeats": heartbeats,
+        "oldest_pending": oldest.created_at if oldest else None,
         "period_start": start,
         "period_end": end,
         "order_count": order_count,

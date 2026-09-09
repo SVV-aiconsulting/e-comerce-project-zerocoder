@@ -64,6 +64,12 @@ def _claim_event(event_id: int) -> EventClaim:
                 reason="already_processing",
             )
 
+        if event.processing_attempts >= settings.INTAKE_MAX_PROCESSING_ATTEMPTS:
+            event.status = InboundEventStatus.FAILED
+            event.last_error = "Исчерпаны попытки восстановления обработки"
+            event.processing_token = None
+            event.save(update_fields=["status", "last_error", "processing_token", "updated_at"])
+            return EventClaim(token=None, attempts=event.processing_attempts, reason="failed")
         token = uuid.uuid4()
         event.status = InboundEventStatus.PROCESSING
         event.processing_token = token
@@ -154,12 +160,27 @@ def _retry_countdown(attempts: int) -> int:
 )
 def process_inbound_event(self, event_id: int):
     """Идемпотентно обработать одно входящее событие."""
+    from apps.intake.leases import customer_mutex
+    event = InboundEvent.objects.filter(pk=event_id).first()
+    if event is None:
+        return {"event_id": event_id, "status": "missing"}
+    with customer_mutex(event.channel, event.external_user_id) as acquired:
+        if not acquired:
+            return {"event_id": event_id, "status": "customer_busy"}
+        return _process_claimed(self, event_id)
+
+
+def _process_claimed(self, event_id):
+    from apps.intake.leases import claim_context, LeaseLost
     claim = _claim_event(event_id)
     if claim.token is None:
         return {"event_id": event_id, "status": claim.reason}
 
+    context_token = claim_context.set((event_id, claim.token))
     try:
         outcome = InboundEventProcessor.process(event_id)
+    except LeaseLost:
+        return {"event_id": event_id, "status": "lease_lost"}
     except PermanentIntakeError as exc:
         _record_error(event_id, claim.token, exc)
         raise
@@ -172,6 +193,9 @@ def process_inbound_event(self, event_id: int):
         retry_at = timezone.now() + timedelta(seconds=countdown)
         _record_error(event_id, claim.token, exc, retry_at=retry_at)
         raise self.retry(exc=exc, countdown=countdown)
+
+    finally:
+        claim_context.reset(context_token)
 
     if not _finish_event(event_id, claim.token, outcome.status):
         return {"event_id": event_id, "status": "lease_lost"}
@@ -187,7 +211,8 @@ def dispatch_pending_events():
     """Переопубликовать события из PostgreSQL после сбоя брокера/worker."""
     now = timezone.now()
     due = (
-        Q(status=InboundEventStatus.RECEIVED)
+        Q(status=InboundEventStatus.PROCESSING, started_at__lte=now-timedelta(seconds=settings.INTAKE_EVENT_LEASE_SECONDS))
+        | Q(status=InboundEventStatus.RECEIVED)
         | Q(status=InboundEventStatus.QUEUED, next_retry_at__isnull=True)
         | Q(status=InboundEventStatus.QUEUED, next_retry_at__lte=now)
         | Q(status=InboundEventStatus.RETRY_SCHEDULED, next_retry_at__lte=now)
@@ -201,7 +226,8 @@ def dispatch_pending_events():
         event_ids = [event.pk for event in events]
         InboundEvent.objects.filter(pk__in=event_ids).update(
             status=InboundEventStatus.QUEUED,
-            next_retry_at=None,
+            next_retry_at=now+timedelta(seconds=30),
+            processing_token=None,
         )
 
     published = sum(InboundEventService.publish(event_id) for event_id in event_ids)

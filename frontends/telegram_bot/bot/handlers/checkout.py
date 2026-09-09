@@ -436,6 +436,7 @@ async def callback_confirm_order(callback: CallbackQuery, state: FSMContext, api
         "customer_comment": session.get("customer_comment") or "",
         "customer_email": session.get("checkout_email") or "",
         "delivery_quote_id": session.get("delivery_quote_id"),
+        "preview_id": (session.get("checkout_preview") or {}).get("preview_id"),
         "is_new_customer": session.get("is_new_customer", False),
     }
 

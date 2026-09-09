@@ -1,8 +1,28 @@
 # Production operations (VPS)
 
+> Обновление 08.09.2026: актуальный порядок выпуска, readiness, разделённые очереди и запрет отката к F1–F6 описаны в [MODERNIZATION_RELEASE.md](./MODERNIZATION_RELEASE.md). Старые checkpoint-статусы ниже сохранены как история проекта и не являются разрешением на production-выпуск новой версии без повторной приёмки.
+
 Операционный runbook для продакшн-стенда WebMarket: диагностика, демо, бэкапы, откат и preflight перед деплоем.
 
 Связанные документы: [SECURITY_HARDENING_PLAN.md](../SECURITY_HARDENING_PLAN.md), [README.md](../README.md) (раздел «Продакшн на VPS»), [docs/TELEGRAM_BOT.md](./TELEGRAM_BOT.md), [docs/VK_BOT.md](./VK_BOT.md).
+
+## Выпуск кандидата 1.1
+
+1. Зафиксировать Git SHA, создать backup и восстановить его в отдельную БД.
+2. Включить режим обслуживания, прекратить приём новых действий и дождаться текущих
+   intake-задач. Запускать миграции образом того же SHA, который будет обслуживать запросы.
+3. Поднять `web`, `celery_worker` (очередь `intake`), `payment_worker`,
+   `delivery_worker`, `celery_beat`, ботов, PostgreSQL и Redis.
+4. Проверить `/api/health/`, `/api/ready/`, heartbeat каждой очереди, возраст самой
+   старой заявки, ошибки ЮKassa/Яндекс и ручной guest checkout.
+5. Оставить `AI_CONSULTANT_ENABLED=False`, пока 40 сценариев из
+   `AI_DIALOGUE_ACCEPTANCE.md` не дадут не менее 95%, ноль нарушений доступа/сумм и
+   p95 не хуже baseline более чем на 20%.
+6. После включения консультанта сохранить старый режим как оперативный feature-flag
+   fallback. Серверные проверки доступа, preview, платежей и возвратов не отключаются.
+
+Откат выполняется только к версии, совместимой с добавленными таблицами и обязательным
+`preview_id`. Версия с известными F1–F6 не является допустимым rollback target.
 
 ## Статус стенда
 

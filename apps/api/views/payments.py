@@ -24,7 +24,8 @@ class CreatePaymentView(APIView):
         if order is None:
             raise OrderNotFound()
         customer = resolve_customer_from_identity(**identity.validated_data)
-        if customer.pk != order.customer_id:
+        from apps.orders.access import OrderAccessService
+        if not OrderAccessService.visible(**identity.validated_data).filter(pk=order.pk).exists():
             raise OrderAccessDenied()
         payment = PaymentService.ensure_payment_link(order)
         return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)

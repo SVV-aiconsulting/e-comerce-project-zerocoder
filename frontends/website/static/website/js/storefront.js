@@ -200,8 +200,12 @@
   const deliveryQuoteId = document.querySelector("[data-delivery-quote-id]");
   const deliveryQuoteStatus = document.querySelector("[data-delivery-quote-status]");
   let deliveryQuoteTimer = null;
+  let checkoutPreviewId = null;
+  let previewSequence = 0;
 
   const clearDeliveryQuote = () => {
+    checkoutPreviewId = null;
+    previewSequence += 1;
     if (deliveryQuoteId) deliveryQuoteId.value = "";
   };
 
@@ -230,11 +234,14 @@
         ? "Рассчитываем стоимость в Яндекс Доставке…"
         : "Самовывоз — бесплатно.";
     }
+    const sequence = ++previewSequence;
     try {
       const preview = await request("/store/checkout/preview/", {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      if (sequence !== previewSequence) return null;
+      checkoutPreviewId = preview.preview_id;
       document.querySelector("[data-cart-discount]").textContent = money(preview.discount_amount);
       document.querySelector("[data-cart-delivery]").textContent = money(preview.delivery_cost);
       document.querySelector("[data-cart-total]").textContent = money(preview.total_amount);
@@ -381,6 +388,20 @@
   const checkoutForm = document.querySelector("[data-checkout-form]");
   const addressField = document.querySelector("[data-address-field]");
   const receiptEmailField = checkoutForm?.querySelector('[name="email"]');
+
+  async function loadAccountProfile() {
+    if (!checkoutForm) return;
+    try {
+      const account = await request("/store/account/");
+      if (!account.authenticated) return;
+      if (!checkoutForm.name.value) checkoutForm.name.value = account.name || "";
+      if (!checkoutForm.email.value) checkoutForm.email.value = account.email || "";
+      if (!checkoutForm.phone.value) checkoutForm.phone.value = account.phone_login || "";
+    } catch (_error) {
+      // The storefront remains fully usable as a guest if the account endpoint
+      // is temporarily unavailable.
+    }
+  }
   const receiptEmailMark = document.querySelector("[data-receipt-email-mark]");
 
   const syncReceiptEmailRequirement = () => {
@@ -405,6 +426,7 @@
     window.clearTimeout(deliveryQuoteTimer);
     deliveryQuoteTimer = window.setTimeout(() => refreshPreview(), 650);
   });
+  checkoutForm?.addEventListener("input", clearDeliveryQuote);
   checkoutForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     syncReceiptEmailRequirement();
@@ -414,9 +436,15 @@
     errorNode.hidden = true;
     resultNode.hidden = true;
     try {
-      await refreshPreview({ required: true });
+      if (!checkoutPreviewId) {
+        await refreshPreview({ required: true });
+        resultNode.hidden = false;
+        resultNode.textContent = "Проверьте рассчитанный итог и нажмите «Оформить» ещё раз для подтверждения.";
+        return;
+      }
       const payload = Object.fromEntries(new FormData(checkoutForm).entries());
       payload.personal_data_consent = checkoutForm.personal_data_consent.checked;
+      payload.preview_id = checkoutPreviewId;
       const order = await request("/store/orders/", {
         method: "POST",
         body: JSON.stringify(payload),
@@ -433,6 +461,7 @@
       }
       await refreshCart();
     } catch (error) {
+      clearDeliveryQuote();
       errorNode.hidden = false;
       errorNode.textContent = error.message;
     }
@@ -630,5 +659,7 @@
 
   loadCatalogFromBackend();
   syncReceiptEmailRequirement();
-  refreshCart().then(refreshPreview).catch(() => undefined);
+  Promise.all([loadAccountProfile(), refreshCart()])
+    .then(() => refreshPreview())
+    .catch(() => undefined);
 })();

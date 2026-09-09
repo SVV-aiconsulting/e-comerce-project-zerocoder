@@ -1,5 +1,7 @@
 from decimal import Decimal
+import uuid
 
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import Q
@@ -60,6 +62,31 @@ class Cart(TimeStampedModel):
     )
     contact_phone = models.CharField(max_length=11, blank=True)
     contact_email = models.EmailField(max_length=320, blank=True)
+    revision = models.PositiveBigIntegerField(default=1, editable=False)
+    desired_date = models.DateField(null=True, blank=True)
+    desired_time_interval = models.CharField(max_length=8, blank=True)
+
+    CHECKOUT_FIELDS = (
+        "receiving_type", "delivery_address", "payment_method", "customer_comment",
+        "contact_phone", "contact_email", "desired_date", "desired_time_interval",
+    )
+
+    def save(self, *args, **kwargs):
+        # Includes Admin/state endpoints; queryset.update must not mutate checkout.
+        from django.db import transaction
+        if not self.pk:
+            return super().save(*args, **kwargs)
+        with transaction.atomic():
+            old = type(self).objects.select_for_update().get(pk=self.pk)
+            fields = kwargs.get("update_fields")
+            changed = any(
+                (fields is None or field in fields) and getattr(old, field) != getattr(self, field)
+                for field in self.CHECKOUT_FIELDS
+            )
+            self.revision = old.revision + int(changed)
+            if fields is not None and changed:
+                kwargs["update_fields"] = [*fields, "revision"]
+            return super().save(*args, **kwargs)
 
     class Meta:
         verbose_name = "Корзина"
@@ -110,3 +137,55 @@ class CartItem(TimeStampedModel):
 
     def __str__(self) -> str:
         return f"{self.product.name} × {self.quantity}"
+
+    def save(self, *args, **kwargs):
+        from django.db import transaction
+        from django.db.models import F
+        with transaction.atomic():
+            Cart.objects.select_for_update().get(pk=self.cart_id)
+            old = type(self).objects.filter(pk=self.pk).first() if self.pk else None
+            changed = old is None or old.quantity != self.quantity or old.product_id != self.product_id
+            result = super().save(*args, **kwargs)
+            if changed:
+                Cart.objects.filter(pk=self.cart_id).update(revision=F("revision") + 1)
+            return result
+
+
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+
+
+@receiver(post_delete, sender=CartItem)
+def item_removed(sender, instance, **kwargs):
+    from django.db.models import F
+    Cart.objects.filter(pk=instance.cart_id).update(revision=F("revision") + 1)
+
+
+class CheckoutPreview(models.Model):
+    """Immutable terms; only the resulting order may be attached afterwards."""
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    cart = models.ForeignKey(Cart, on_delete=models.PROTECT, related_name="previews")
+    cart_revision = models.PositiveBigIntegerField()
+    customer = models.ForeignKey("customers.Customer", null=True, on_delete=models.PROTECT)
+    snapshot = models.JSONField()
+    quote = models.ForeignKey("delivery.DeliveryQuote", null=True, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    order = models.OneToOneField("orders.Order", null=True, blank=True, on_delete=models.PROTECT)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            old = type(self).objects.only(
+                "cart_id", "cart_revision", "customer_id", "snapshot", "quote_id",
+                "created_at", "expires_at", "order_id"
+            ).get(pk=self.pk)
+            immutable_changed = any(
+                getattr(old, field) != getattr(self, field)
+                for field in (
+                    "cart_id", "cart_revision", "customer_id", "snapshot", "quote_id",
+                    "created_at", "expires_at",
+                )
+            )
+            if immutable_changed or (old.order_id and old.order_id != self.order_id):
+                raise ValidationError("Условия CheckoutPreview неизменяемы")
+        return super().save(*args, **kwargs)

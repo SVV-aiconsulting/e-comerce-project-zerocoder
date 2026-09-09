@@ -30,6 +30,13 @@ def _error_response(code: str, message: str, details: dict | None = None, http_s
 
 
 def _map_shop_error(exc: ShopError) -> Response:
+    from apps.common.exceptions import PreviewStaleError, IntakeRateLimited
+    if isinstance(exc, IntakeRateLimited):
+        response = _error_response("rate_limited", str(exc), {"retry_after": exc.retry_after}, http_status=429)
+        response["Retry-After"] = str(exc.retry_after)
+        return response
+    if isinstance(exc, PreviewStaleError):
+        return _error_response("preview_stale", str(exc), http_status=409)
     if isinstance(exc, YooKassaAPIError):
         return _error_response(
             "payment_provider_error",

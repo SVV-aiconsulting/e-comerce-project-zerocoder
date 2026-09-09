@@ -50,7 +50,7 @@ services:
 
   celery_worker:
     build: .
-    command: celery -A config worker --loglevel=INFO --queues=intake
+    command: celery -A config worker --loglevel=INFO --queues=intake,payments,delivery
     env_file:
       - .env
     environment:

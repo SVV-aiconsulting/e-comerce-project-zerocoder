@@ -1,0 +1,3 @@
+(() => {const state=document.getElementById("payment-state"); if(!state)return;
+let attempts=0;async function refresh(){try{const r=await fetch(`/store/account/orders/${encodeURIComponent(state.dataset.order)}/`);if(!r.ok)return;const data=await r.json();state.textContent=data.payment_status_label;if(data.payment_status!=="paid"&&++attempts<20)setTimeout(refresh,3000);}catch{state.textContent="Не удалось проверить статус. Повторите позже.";}}
+document.getElementById("refresh-payment").onclick=()=>{attempts=0;refresh();};refresh();})();

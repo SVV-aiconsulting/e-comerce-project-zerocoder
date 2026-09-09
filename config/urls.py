@@ -21,7 +21,17 @@ from apps.dashboard.views import manager_dashboard
 from apps.privacy.models import PersonalDataDocumentType
 from apps.privacy.views import WebsiteConsentView, WebsiteWithdrawalView, document_view
 
+from apps.customers.web_accounts import (CodeRequestView, CodeVerifyView, LogoutView,
+    AccountView, AccountOrdersView, account_page)
+
 urlpatterns = [
+    path("account/", account_page, name="account"),
+    path("store/auth/code/request/", CodeRequestView.as_view()),
+    path("store/auth/code/verify/", CodeVerifyView.as_view()),
+    path("store/auth/logout/", LogoutView.as_view()),
+    path("store/account/", AccountView.as_view()),
+    path("store/account/orders/", AccountOrdersView.as_view()),
+    path("store/account/orders/<str:number>/", AccountOrdersView.as_view()),
     path("", NaturalOrderView.as_view(), name="natural-order"),
     path("privacy-policy/", lambda request: document_view(request, PersonalDataDocumentType.POLICY), name="privacy-policy"),
     path("privacy-policy/v/<str:version>/", lambda request, version: document_view(request, PersonalDataDocumentType.POLICY, version), name="privacy-policy-version"),

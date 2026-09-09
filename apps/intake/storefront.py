@@ -231,6 +231,8 @@ def identify_from_payload(request, payload: dict):
         raise ValueError("Нужно дать согласие на обработку персональных данных.")
     if payload.get("personal_data_consent") and not ConsentService.has_current_consent(channel=Channel.WEBSITE, identity_value=session_id):
         ConsentService.record(channel=Channel.WEBSITE, identity_type=IdentityType.WEBSITE_SESSION_ID, identity_value=session_id, source="website_checkout", status=ConsentStatus.GRANTED, expression_method=ConsentMethod.WEBSITE_CHECKBOX, evidence={"csrf_protected": True})
+    from apps.customers.web_accounts import account_for
+    account = account_for(request)
     identity = CustomerService.resolve_website_customer(
         name=name or "Покупатель",
         phone=phone,
@@ -240,7 +242,7 @@ def identify_from_payload(request, payload: dict):
     customer = identity.customer
     if customer is None:
         raise ValueError("Не удалось идентифицировать клиента.")
-    if ConsentService.has_current_consent(channel=Channel.WEBSITE, identity_value=session_id):
+    if identity.is_new_customer and ConsentService.has_current_consent(channel=Channel.WEBSITE, identity_value=session_id):
         consent_event = PersonalDataConsentEvent.objects.filter(
             channel=Channel.WEBSITE,
             identity_value=session_id,
@@ -261,7 +263,10 @@ class WebsiteApiView(View):
             return super().dispatch(request, *args, **kwargs)
         except ShopError as exc:
             response = _map_shop_error(exc)
-            return JsonResponse(response.data, status=response.status_code)
+            result = JsonResponse(response.data, status=response.status_code)
+            if response.has_header("Retry-After"):
+                result["Retry-After"] = response["Retry-After"]
+            return result
         except ValidationError as exc:
             message = exc.messages[0] if getattr(exc, "messages", None) else str(exc)
             return json_error(message)
@@ -326,9 +331,10 @@ class WebsiteCheckoutPreviewView(WebsiteApiView):
         cart.payment_method = str(payload.get("payment_method") or PaymentMethod.CARD_PREPAYMENT)
         cart.contact_phone = normalize_phone(phone) if phone else ""
         cart.contact_email = normalize_email(email) if email else ""
+        cart.customer_comment = str(payload.get("customer_comment") or "").strip()
         cart.save(update_fields=[
             "receiving_type", "delivery_address", "payment_method",
-            "contact_phone", "contact_email", "updated_at",
+            "contact_phone", "contact_email", "customer_comment", "updated_at",
         ])
         preview = CheckoutDeliveryService.preview(
             cart=cart,
@@ -339,10 +345,14 @@ class WebsiteCheckoutPreviewView(WebsiteApiView):
                 payload.get("payment_method") or PaymentMethod.CARD_PREPAYMENT
             ),
         )
+        from apps.carts.checkout import CheckoutService
+        snapshot = CheckoutService.record(cart=cart, customer=customer, result=preview)
         totals = preview.totals
         quote = preview.quote
         return JsonResponse(
             {
+                "preview_id": str(snapshot.public_id),
+                "expires_at": snapshot.expires_at.isoformat(),
                 "items_total": str(totals.items_total),
                 "discount_amount": str(totals.discount_amount),
                 "delivery_cost": str(totals.delivery_cost),
@@ -380,33 +390,15 @@ class WebsiteCreateOrderView(WebsiteApiView):
         identity = identify_from_payload(request, payload)
         customer = identity.customer
         cart = website_cart(request)
-        quote = CheckoutDeliveryService.selected_quote(
-            cart=cart,
-            receiving_type=receiving_type,
-            delivery_address=str(payload.get("delivery_address") or ""),
-            quote_id=payload.get("delivery_quote_id"),
-        )
-        delivery_cost_override = CheckoutDeliveryService.delivery_cost_for_quote(
-            cart=cart,
-            customer=customer,
-            quote=quote,
-        )
-        order = OrderService.create_order_from_cart(
-            cart,
-            customer=customer,
-            channel=Channel.WEBSITE,
-            receiving_type=receiving_type,
-            payment_method=payment_method,
+        from apps.carts.checkout import CheckoutService
+        order = CheckoutService.create_order(preview_id=payload.get("preview_id"),
+            channel=Channel.WEBSITE, external_user_id=get_or_create_website_user_id(request),
+            customer=customer, receiving_type=receiving_type, payment_method=payment_method,
             delivery_address=str(payload.get("delivery_address") or "").strip(),
             customer_comment=str(payload.get("customer_comment") or "").strip(),
-            customer_email_snapshot=normalize_email(str(payload.get("email") or ""))
-            if str(payload.get("email") or "").strip()
-            else None,
-            delivery_cost_override=delivery_cost_override,
-            is_new_customer=identity.is_new_customer,
-            status_source=StatusChangeSource.WEBSITE,
-        )
-        CheckoutDeliveryService.attach_quote(quote, order)
+            contact_phone=normalize_phone(str(payload.get("phone") or "")) if payload.get("phone") else "",
+            contact_email=normalize_email(str(payload.get("email") or "")) if payload.get("email") else "",
+            is_new_customer=identity.is_new_customer, status_source=StatusChangeSource.WEBSITE)
         confirmation_url = ""
         if payment_method == PaymentMethod.CARD_PREPAYMENT:
             try:
@@ -463,12 +455,19 @@ class WebsiteAssistantMessageView(WebsiteApiView):
                 code="consent_required",
                 status=403,
             )
-        # Website не имеет регистрации. Поэтому сохранённая карточка из browser
-        # session никогда не применяется к AI-диалогу: имя и телефон должен
-        # явно передать именно текущий посетитель.
+        # A verified account may supply its own current profile. A guest still
+        # has to provide contacts explicitly in this conversation; neither path
+        # reuses an arbitrary CRM card from an older browser session.
+        from apps.customers.web_accounts import account_for
+
+        account = account_for(request)
         customer = None
         phone, email = contacts_from_message(message)
         name = contact_name_from_message(message)
+        if account:
+            name = name or account.name
+            phone = phone or (account.phone_login or "")
+            email = email or account.email
         draft = active_assistant_draft(
             external_user_id=external_user_id,
             conversation_key=conversation_key,
@@ -527,8 +526,9 @@ class WebsiteAssistantMessageView(WebsiteApiView):
                 identity_value=consent_identity,
                 status=ConsentStatus.GRANTED,
             ).order_by("-occurred_at", "-id").first()
-            customer.personal_data_consent = True
-            if consent_event:
+            if identity.is_new_customer:
+                customer.personal_data_consent = True
+            if consent_event and identity.is_new_customer:
                 customer.personal_data_consent_registry_key = consent_event.public_id
             customer.save(update_fields=["personal_data_consent", "personal_data_consent_registry_key", "updated_at"])
             request.session[SESSION_ASSISTANT_IDENTITY_CONVERSATION_KEY] = conversation_key
@@ -548,8 +548,8 @@ class WebsiteAssistantMessageView(WebsiteApiView):
             raw_text=message,
             raw_payload={
                 "source": "website_ai_assistant",
-                "contact_phone": phone or (customer.phone if customer else ""),
-                "contact_email": email or (customer.email if customer else ""),
+                "contact_phone": phone,
+                "contact_email": email,
             },
         )
         InboundEventService.enqueue(registration.event)

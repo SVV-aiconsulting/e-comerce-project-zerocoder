@@ -8,7 +8,7 @@ on:
 concurrency:
   group: deploy-webmarket-production
   # Новый commit заменяет устаревший deployment, чтобы не ждать его SSH timeout.
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -171,7 +171,7 @@ jobs:
               # Совместимо с Git старее 2.28, который не поддерживает `git init -b`.
               git init
             fi
-            git fetch "https://github.com/$REPOSITORY.git" main
+            git fetch "https://github.com/$REPOSITORY.git" "${{ github.sha }}"
             git checkout -B main FETCH_HEAD
 
             echo "STEP: pull immutable container images"
@@ -180,6 +180,16 @@ jobs:
             export WEBMARKET_VK_BOT_IMAGE_TAG="${{ github.sha }}"
             export COMPOSE_PROJECT_NAME=webmarket
             timeout 15m docker compose -f docker-compose.prod.yml pull
+
+            echo "STEP: drain intake and apply additive migrations before serving new code"
+            docker compose -f docker-compose.prod.yml stop -t 60 nginx telegram_bot vk_bot celery_beat web
+            docker compose -f docker-compose.prod.yml stop -t 180 celery_worker payment_worker delivery_worker
+            docker compose -f docker-compose.prod.yml up -d --no-build db redis
+            mkdir -p backups
+            docker compose -f docker-compose.prod.yml exec -T db sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "backups/pre-${{ github.sha }}.dump"
+            test -s "backups/pre-${{ github.sha }}.dump"
+            docker compose -f docker-compose.prod.yml run --rm --no-deps web python manage.py migrate --noinput
+            docker compose -f docker-compose.prod.yml run --rm --no-deps web python manage.py check --deploy
 
             echo "STEP: prepare TLS certificate"
             mkdir -p deploy/certbot/conf deploy/certbot/www
@@ -228,8 +238,6 @@ jobs:
               fi
               sleep 2
             done
-            echo "STEP: apply database migrations"
-            docker compose -f docker-compose.prod.yml exec -T web python manage.py migrate --noinput
             echo "STEP: run production configuration check"
             docker compose -f docker-compose.prod.yml exec -T web python manage.py check --deploy
             echo "STEP: verify HTTPS health-check"

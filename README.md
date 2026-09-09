@@ -10,6 +10,8 @@ Backend-ядро интернет-магазина с CRM-функциями: т
 |----------|------------|
 | [docs/TECHNICAL_SPECIFICATION.md](./docs/TECHNICAL_SPECIFICATION.md) | Техническое задание выпускного проекта |
 | [docs/MODERNIZATION_PLAN.md](./docs/MODERNIZATION_PLAN.md) | Поэтапный план модернизации и границы LLM |
+| [docs/MODERNIZATION_RELEASE.md](./docs/MODERNIZATION_RELEASE.md) | Реализованный безопасный контракт, выпуск и приёмка |
+| [docs/AI_DIALOGUE_ACCEPTANCE.md](./docs/AI_DIALOGUE_ACCEPTANCE.md) | 40 многоходовых сценариев и метрики консультанта |
 | [docs/AI_ORDER_DATA_MODEL.md](./docs/AI_ORDER_DATA_MODEL.md) | Сущности и состояния AI-заявки до создания миграций |
 | [docs/LOCAL_DATABASE.md](./docs/LOCAL_DATABASE.md) | Отдельный локальный PostgreSQL для разработки и тестов |
 | [docs/QUEUE.md](./docs/QUEUE.md) | Единая очередь Celery/Redis, retry и диагностика |
@@ -429,7 +431,7 @@ ADAPTER_API_PUBLIC_CATALOG=False
 # Telegram-бот
 TELEGRAM_BOT_TOKEN=<токен-от-BotFather>
 ADAPTER_API_TOKEN=<тот-же-токен-что-в-ADAPTER_API_TOKENS>
-BACKEND_API_BASE_URL=http://nginx
+BACKEND_API_BASE_URL=http://web:8000
 TELEGRAM_BOT_USE_POLLING=true
 TELEGRAM_BOT_LOG_LEVEL=INFO
 
@@ -442,7 +444,7 @@ TELEGRAM_BOT_LOG_LEVEL=INFO
 Важно:
 
 - `DJANGO_DEBUG=False` — **обязательно** (иначе автодеплой из GitHub Actions остановится).
-- В `DJANGO_ALLOWED_HOSTS` обязательно есть `<VPS_IP>` и `nginx` (бот ходит в API через nginx).
+- В `DJANGO_ALLOWED_HOSTS` обязательно есть домен (`webmarket.apernova.ru`) и служебные `web`,`nginx`. Боты ходят в API на `http://web:8000` (override в `docker-compose.prod.yml`).
 - `ADAPTER_API_TOKEN` должен совпадать с одним из значений в `ADAPTER_API_TOKENS`.
 - Файл `.env` **не в git** — при деплое не перезаписывается.
 
@@ -565,7 +567,7 @@ ss -tlnp | grep -E ':80|:8000|:5432'
 | `denied` при `docker pull` | `docker login ghcr.io` с PAT (`read:packages`) |
 | Admin `400 Bad Request` | Добавить `<VPS_IP>` и `nginx` в `DJANGO_ALLOWED_HOSTS`, затем `docker compose -f docker-compose.prod.yml up -d` |
 | Admin без стилей | Ctrl+F5; в образе уже есть `collectstatic` + WhiteNoise |
-| Бот не грузит фото | В `.env` на VPS: `BACKEND_API_BASE_URL=http://nginx`, в `ALLOWED_HOSTS` — `nginx` |
+| Бот не грузит фото | Бот должен ходить на `http://web:8000` (override в `docker-compose.prod.yml`); проверить volume `media_data` |
 | VK-бот не стартует | Добавить `VK_BOT_TOKEN`, `VK_GROUP_ID` в `.env` и запустить с `--profile vk` |
 | Deploy в Actions упал на preflight | В VPS `.env`: `DJANGO_DEBUG=False` |
 | CSRF 403 в admin по HTTP | Ожидаемо до HTTPS; после TLS — secure cookies в `production.py` |

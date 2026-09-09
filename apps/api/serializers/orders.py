@@ -7,6 +7,7 @@ from apps.orders.models import Order, OrderItem
 
 
 class CreateOrderRequestSerializer(ChannelContextSerializer):
+    preview_id = serializers.UUIDField(required=False, allow_null=True)
     customer_id = serializers.IntegerField()
     receiving_type = serializers.ChoiceField(choices=ReceivingType.values)
     payment_method = serializers.ChoiceField(choices=PaymentMethod.values)

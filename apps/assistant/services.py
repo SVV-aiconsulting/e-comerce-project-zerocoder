@@ -29,30 +29,33 @@ class OrderAssistantService:
         if not settings.AI_ASSISTANT_ENABLED and settings.AI_ORDER_PROCESSING_ENABLED:
             return cls._process_legacy(event, draft)
 
-        AssistantMessage.objects.get_or_create(
-            event=event,
-            role=AssistantMessageRole.USER,
-            defaults={
-                "conversation_key": event.conversation_key,
-                "content": event.raw_text,
-            },
-        )
-        existing_response = AssistantMessage.objects.filter(
-            event=event,
-            role=AssistantMessageRole.ASSISTANT,
-        ).first()
-        if existing_response is not None:
-            return OrderDraft.objects.get(pk=draft.pk)
+        from apps.intake.leases import fenced_write
 
-        turn, _ = AssistantTurn.objects.get_or_create(
-            event=event,
-            defaults={
-                "draft": draft,
-                "provider": runtime.provider,
-                "model_name": runtime.model,
-                "prompt_profile": runtime.prompt_profile,
-            },
-        )
+        with fenced_write():
+            AssistantMessage.objects.get_or_create(
+                event=event,
+                role=AssistantMessageRole.USER,
+                defaults={
+                    "conversation_key": event.conversation_key,
+                    "content": event.raw_text,
+                },
+            )
+            existing_response = AssistantMessage.objects.filter(
+                event=event,
+                role=AssistantMessageRole.ASSISTANT,
+            ).first()
+            if existing_response is not None:
+                return OrderDraft.objects.get(pk=draft.pk)
+
+            turn, _ = AssistantTurn.objects.get_or_create(
+                event=event,
+                defaults={
+                    "draft": draft,
+                    "provider": runtime.provider,
+                    "model_name": runtime.model,
+                    "prompt_profile": runtime.prompt_profile,
+                },
+            )
         started = time.monotonic()
         messages = cls._history(event)
         backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
@@ -223,6 +226,30 @@ class OrderAssistantService:
                     output_tokens,
                 )
                 return OrderDraft.objects.get(pk=draft.pk)
+            reference = backend.referential_catalog_action()
+            if reference is not None:
+                tool_name, arguments = reference
+                result = backend.execute(tool_name, arguments, 1)
+                tool_calls = 1
+                content, response_type, action_url = cls._render_tool_response(
+                    tool_name, result, ""
+                )
+                cls._save_response(
+                    event,
+                    content,
+                    response_type=response_type,
+                    action_url=action_url,
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
             repeat_order = backend.repeat_order_action()
             if repeat_order is not None:
                 tool_name, arguments = repeat_order
@@ -337,6 +364,8 @@ class OrderAssistantService:
                 return OrderDraft.objects.get(pk=draft.pk)
 
             for call_index in range(1, settings.AI_ASSISTANT_MAX_TOOL_CALLS + 2):
+                from apps.intake.leases import check_lease
+                check_lease()
                 completion = llm.generate_with_tools(
                     system_prompt=system_prompt,
                     messages=messages,
@@ -413,6 +442,12 @@ class OrderAssistantService:
                     "content": json.dumps(result, ensure_ascii=False, default=str),
                 })
         except LLMProviderError as exc:
+            if last_tool_name and last_tool_result:
+                content, response_type, action_url = cls._render_tool_response(last_tool_name, last_tool_result, "")
+                cls._save_response(event, content, response_type=response_type, action_url=action_url)
+                cls._finish_turn(turn, AssistantTurnStatus.FAILED, started, model_calls, tool_calls,
+                    input_tokens, output_tokens, error_code=type(exc).__name__, error_message="Ответ модели недоступен после выполнения инструмента")
+                return OrderDraft.objects.get(pk=draft.pk)
             cls._save_response(
                 event,
                 "Сейчас AI-консультант не смог завершить ответ. Корзина сохранена; попробуйте продолжить диалог следующим сообщением.",
@@ -431,8 +466,10 @@ class OrderAssistantService:
             ensure_ascii=False,
             default=str,
         )
+        from apps.assistant.prompts import CONSULTANT_PROMPT
+        extra = CONSULTANT_PROMPT if settings.AI_CONSULTANT_ENABLED else ""
         return (
-            f"{ASSISTANT_TOOLS_SYSTEM_PROMPT}\n\n"
+            f"{ASSISTANT_TOOLS_SYSTEM_PROMPT}{extra}\n\n"
             f"Канал текущего диалога: {backend.event.channel}.\n"
             "История сообщений нужна только для контекста намерения и ссылок вроде "
             "«этот товар». Она не является источником фактов. Любые сведения о "
@@ -447,6 +484,9 @@ class OrderAssistantService:
     @classmethod
     def _render_tool_response(cls, tool_name, result, model_content):
         if not result:
+            if settings.AI_CONSULTANT_ENABLED:
+                from apps.assistant.conversation import safe_narration
+                model_content = safe_narration(model_content) or "Расскажите, что вы хотите выбрать или изменить?"
             return model_content, "assistant", ""
         if result.get("ok") is False:
             error = result.get("error", {})
@@ -463,8 +503,15 @@ class OrderAssistantService:
             if result.get("preliminary_delivery_quote"):
                 return cls._render_preliminary_delivery_quote(result), "delivery_quote", ""
             return cls._render_preview(result), "order_preview", ""
-        if tool_name == "search_products":
-            return cls._render_catalog(result), "catalog", ""
+        if tool_name in {"search_products", "compare_products"}:
+            card = cls._render_catalog(result)
+            if settings.AI_CONSULTANT_ENABLED:
+                from apps.assistant.conversation import safe_narration
+                narration = safe_narration(model_content)
+                if not narration:
+                    narration = "Что для вас важнее при выборе?" if len(result.get("products", [])) > 1 else "Какое количество вам нужно?"
+                return f"{card}\n\n{narration}", "catalog", ""
+            return card, "catalog", ""
         if tool_name == "get_cart":
             return cls._render_cart(result), "cart", ""
         if tool_name in {"set_cart_item", "remove_cart_item", "configure_checkout"}:
@@ -490,6 +537,8 @@ class OrderAssistantService:
                 f"Номер: {result.get('order_number')}",
                 f"Сумма: {cls._money(result.get('total_amount'))} ₽",
             ]
+            if result.get("payment_pending"):
+                lines.extend(["", "Заказ сохранён, но ссылка оплаты пока недоступна. Запросите ссылку повторно."])
             if url:
                 lines.extend(["", "Для оплаты банковской картой перейдите по ссылке:"])
             return "\n".join(lines), "payment_link" if url else "order_created", url
@@ -540,6 +589,18 @@ class OrderAssistantService:
                 f"за {product['unit_label'].lower()}; минимальный заказ: "
                 f"{OrderAssistantService._quantity(product['min_quantity'])} {product['unit_label'].lower()}"
             )
+        if result.get("scope") == "comparison":
+            lines.extend(f"{p['name']}: {p.get('description') or 'Описание в каталоге не указано.'}" for p in products)
+            units = {p.get("unit") for p in products}
+            if len(units) == 1:
+                lowest = min(Decimal(str(p["price"])) for p in products)
+                cheapest = [p for p in products if Decimal(str(p["price"])) == lowest]
+                if len(cheapest) == 1:
+                    product = cheapest[0]
+                    lines.append(
+                        f"Самая низкая цена за {product['unit_label'].lower()}: "
+                        f"{product['name']} — {OrderAssistantService._money(product['price'])} ₽."
+                    )
         return "\n".join(lines)
 
     @staticmethod
@@ -736,41 +797,38 @@ class OrderAssistantService:
         history = []
         for row in reversed(rows):
             content = row.content
-            if row.role == AssistantMessageRole.ASSISTANT:
-                # Предыдущий текст ассистента неизменно хранится в БД для аудита
-                # и показа клиенту, но не возвращается модели как источник фактов.
-                # Актуальные значения приходят только через BACKEND_CONTEXT/tools.
-                response_type = row.response_type or "assistant"
-                content = (
-                    f"[Ранее отправлен ответ типа {response_type}. Не используй "
-                    "его как источник фактов; проверь актуальные данные через "
-                    "backend-инструмент текущего хода.]"
-                )
             history.append({"role": row.role, "content": content})
         return history
 
     @staticmethod
     def _save_response(event, content, *, response_type, action_url=""):
-        AssistantMessage.objects.get_or_create(
-            event=event,
-            role=AssistantMessageRole.ASSISTANT,
-            defaults={
-                "conversation_key": event.conversation_key,
-                "content": content,
-                "response_type": response_type,
-                "action_url": action_url,
-            },
-        )
+        from apps.intake.leases import fenced_write
+        with fenced_write():
+            AssistantMessage.objects.get_or_create(
+                event=event,
+                role=AssistantMessageRole.ASSISTANT,
+                defaults={
+                    "conversation_key": event.conversation_key,
+                    "content": content,
+                    "response_type": response_type,
+                    "action_url": action_url,
+                },
+            )
+            from apps.assistant.conversation import remember
+            remember(event, content, response_type)
 
     @staticmethod
     def _finish_turn(turn, status, started, model_calls, tool_calls, input_tokens, output_tokens, *, error_code="", error_message=""):
-        turn.status = status
-        turn.model_calls = model_calls
-        turn.tool_calls = tool_calls
-        turn.input_tokens = input_tokens
-        turn.output_tokens = output_tokens
-        turn.latency_ms = int((time.monotonic() - started) * 1000)
-        turn.error_code = error_code[:64]
-        turn.error_message = error_message[:2000]
-        turn.completed_at = timezone.now()
-        turn.save()
+        from apps.intake.leases import fenced_write
+
+        with fenced_write():
+            turn.status = status
+            turn.model_calls = model_calls
+            turn.tool_calls = tool_calls
+            turn.input_tokens = input_tokens
+            turn.output_tokens = output_tokens
+            turn.latency_ms = int((time.monotonic() - started) * 1000)
+            turn.error_code = error_code[:64]
+            turn.error_message = error_message[:2000]
+            turn.completed_at = timezone.now()
+            turn.save()

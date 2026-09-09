@@ -191,6 +191,7 @@ class Refund(TimeStampedModel):
     currency = models.CharField(max_length=3, default="RUB")
     reason = models.CharField(max_length=256, blank=True)
     receipt_data = models.JSONField(default=dict, blank=True)
+    allocations = models.JSONField(default=dict, blank=True)
     provider_payload = models.JSONField(default=dict, blank=True)
     last_error = models.TextField(blank=True)
 

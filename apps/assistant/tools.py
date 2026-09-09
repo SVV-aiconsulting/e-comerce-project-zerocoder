@@ -17,6 +17,7 @@ from django.utils import timezone
 from pydantic import ValidationError as PydanticValidationError
 
 from apps.assistant.schemas import (
+    CompareProductsArgs,
     CancelOrderArgs,
     ClearCartArgs,
     ConfigureCheckoutArgs,
@@ -47,6 +48,7 @@ from apps.intake.services import OrderDraftService
 from apps.orders.models import Order
 from apps.orders.services import OrderService
 from apps.payments.models import PaymentState
+from apps.payments.exceptions import PaymentError
 from apps.payments.services import PaymentService
 from apps.customers.validators import normalize_email, normalize_phone
 from apps.delivery.models import DeliveryQuoteStatus
@@ -101,6 +103,7 @@ def _provider_compatible_schema(value):
 
 
 TOOL_SPECS = (
+    ToolSpec("compare_products", "Сравнить 2–4 найденных товара по актуальным карточкам каталога.", CompareProductsArgs),
     ToolSpec("search_products", "Показать весь активный каталог при пустом query или найти товары по названию, виду и синониму.", SearchProductsArgs),
     ToolSpec("get_cart", "Получить актуальный состав AI-корзины и состояние оформления.", EmptyArgs),
     ToolSpec("set_cart_item", "Добавить товар по коду или установить его количество.", SetCartItemArgs, True),
@@ -129,6 +132,24 @@ class AssistantToolExecutor:
         return [spec.function_definition() for spec in TOOL_SPECS]
 
     def execute(self, name: str, raw_arguments: dict, call_index: int) -> dict:
+        from apps.intake.leases import check_lease, fenced_write
+
+        # Delivery and payment tools perform network I/O. Keeping the event row
+        # locked around those calls can hide a freshly-created order from a fast
+        # webhook and stalls recovery. Their domain services are idempotent, so
+        # fence immediately before and after the call instead.
+        network_tools = {
+            "preview_order", "confirm_order", "get_payment_link", "cancel_order"
+        }
+        if name in network_tools:
+            check_lease()
+            result = self._execute(name, raw_arguments, call_index)
+            check_lease()
+            return result
+        with fenced_write():
+            return self._execute(name, raw_arguments, call_index)
+
+    def _execute(self, name: str, raw_arguments: dict, call_index: int) -> dict:
         spec = TOOL_BY_NAME.get(name)
         canonical = json.dumps(raw_arguments, ensure_ascii=False, sort_keys=True, default=str)
         identity = (
@@ -147,16 +168,21 @@ class AssistantToolExecutor:
             call_index=call_index,
         ).first()
         if indexed and indexed.completed_at:
-            return indexed.result
-        audit, _ = AssistantToolCall.objects.get_or_create(
-            idempotency_key=key,
-            defaults={
-                "turn": self.turn,
-                "call_index": call_index,
-                "tool_name": name,
-                "arguments": raw_arguments,
-            },
-        )
+            if indexed.tool_name == name and indexed.arguments == raw_arguments:
+                return indexed.result
+            return {"ok": False, "error": {"code": "replay_mismatch", "message": "Ход уже обработан с другими действиями. Уточните запрос новым сообщением."}}
+        from apps.intake.leases import fenced_write
+
+        with fenced_write():
+            audit, _ = AssistantToolCall.objects.get_or_create(
+                idempotency_key=key,
+                defaults={
+                    "turn": self.turn,
+                    "call_index": call_index,
+                    "tool_name": name,
+                    "arguments": raw_arguments,
+                },
+            )
         started = time.monotonic()
         if spec is None:
             return self._finish_error(audit, started, "unknown_tool", "Инструмент недоступен")
@@ -173,24 +199,32 @@ class AssistantToolExecutor:
             )
         try:
             result = getattr(self, f"_tool_{name}")(arguments)
+            from apps.intake.leases import check_lease
+
+            check_lease()
         except Exception as exc:
+            from apps.intake.leases import LeaseLost
+
+            if isinstance(exc, LeaseLost):
+                raise
             return self._finish_error(
                 audit,
                 started,
                 type(exc).__name__,
                 str(exc) or "Ошибка backend-инструмента",
             )
-        audit.result = result
-        audit.status = (
-            AssistantToolCallStatus.SUCCEEDED
-            if result.get("ok") is not False
-            else AssistantToolCallStatus.REJECTED
-        )
-        if result.get("ok") is False:
-            audit.error_code = str(result.get("error", {}).get("code", "tool_rejected"))[:64]
-        audit.latency_ms = int((time.monotonic() - started) * 1000)
-        audit.completed_at = timezone.now()
-        audit.save(update_fields=["result", "status", "error_code", "latency_ms", "completed_at", "updated_at"])
+        with fenced_write():
+            audit.result = result
+            audit.status = (
+                AssistantToolCallStatus.SUCCEEDED
+                if result.get("ok") is not False
+                else AssistantToolCallStatus.REJECTED
+            )
+            if result.get("ok") is False:
+                audit.error_code = str(result.get("error", {}).get("code", "tool_rejected"))[:64]
+            audit.latency_ms = int((time.monotonic() - started) * 1000)
+            audit.completed_at = timezone.now()
+            audit.save(update_fields=["result", "status", "error_code", "latency_ms", "completed_at", "updated_at"])
         return result
 
     @staticmethod
@@ -198,12 +232,15 @@ class AssistantToolExecutor:
         result = {"ok": False, "error": {"code": code, "message": message}}
         if details:
             result["error"]["details"] = details
-        audit.result = result
-        audit.status = status
-        audit.error_code = code[:64]
-        audit.latency_ms = int((time.monotonic() - started) * 1000)
-        audit.completed_at = timezone.now()
-        audit.save(update_fields=["result", "status", "error_code", "latency_ms", "completed_at", "updated_at"])
+        from apps.intake.leases import fenced_write
+
+        with fenced_write():
+            audit.result = result
+            audit.status = status
+            audit.error_code = code[:64]
+            audit.latency_ms = int((time.monotonic() - started) * 1000)
+            audit.completed_at = timezone.now()
+            audit.save(update_fields=["result", "status", "error_code", "latency_ms", "completed_at", "updated_at"])
         return result
 
     def _draft(self):
@@ -298,8 +335,17 @@ class AssistantToolExecutor:
                 mentioned.append(product)
         return mentioned
 
+    def _tool_compare_products(self, args):
+        products = list(Product.objects.filter(public_code__in=args.product_codes, is_active=True))
+        if len(products) != len(set(args.product_codes)):
+            return {"ok": False, "error": {"message": "Один из выбранных товаров недоступен. Обновите поиск."}}
+        by_code = {p.public_code:p for p in products}
+        return {"ok": True, "scope": "comparison", "query": "сравнение", "products": [self._product_payload(by_code[c]) for c in args.product_codes]}
+
     def catalog_action(self):
         """Детерминированно направляет вопросы о каталоге в источник истины."""
+        if settings.AI_CONSULTANT_ENABLED:
+            return None
         text = normalize_product_text(self.event.raw_text)
         if re.search(r"\b(?:заказ\w*|корзин\w*)\b", text):
             return None
@@ -361,11 +407,63 @@ class AssistantToolExecutor:
                 query = ""
         return "search_products", {"query": query, "limit": 30}
 
+    def referential_catalog_action(self):
+        """Resolve pronouns and ordinals from the last server-backed product list.
+
+        A model may answer a short follow-up without selecting a tool.  That is
+        unsafe for price comparisons and makes phrases such as ``из них`` lose
+        their meaning.  The memory contains product codes only from successful
+        catalogue tools, so it can safely select which current cards to reread.
+        """
+        if not settings.AI_CONSULTANT_ENABLED:
+            return None
+        from apps.intake.models import ConversationMemory
+
+        memory = ConversationMemory.objects.filter(
+            channel=self.event.channel,
+            external_user_id=self.event.external_user_id,
+            conversation_key=self.event.conversation_key,
+        ).first()
+        options = list(memory.options or []) if memory else []
+        options = [
+            option for option in options
+            if isinstance(option, dict) and option.get("code") and option.get("name")
+        ][:4]
+        if not options:
+            return None
+
+        text = normalize_product_text(self.event.raw_text)
+        comparison = re.search(
+            r"\b(?:сравн\w*|дешев\w*|дороже\w*|выгодн\w*|цен\w*)\b",
+            text,
+        )
+        refers_to_list = bool(re.search(r"\b(?:из\s+них|этих|между\s+ними)\b", text))
+        if len(options) >= 2 and (comparison or refers_to_list):
+            return "compare_products", {
+                "product_codes": [option["code"] for option in options]
+            }
+
+        ordinals = (
+            (r"\b(?:перв\w*|1(?:-й|-я|-е)?)\b", 0),
+            (r"\b(?:втор\w*|2(?:-й|-я|-е)?)\b", 1),
+            (r"\b(?:трет\w*|3(?:-й|-я|-е)?)\b", 2),
+            (r"\b(?:четверт\w*|4(?:-й|-я|-е)?)\b", 3),
+        )
+        for pattern, index in ordinals:
+            if re.search(pattern, text) and index < len(options):
+                return "search_products", {"query": options[index]["name"], "limit": 1}
+
+        if len(options) == 1 and re.search(r"\b(?:этот|эта|это|него|не[её])\b", text):
+            return "search_products", {"query": options[0]["name"], "limit": 1}
+        return None
+
     def checkout_action(self):
         """Серверные переходы checkout, которые нельзя оставлять на память LLM."""
         text = normalize_product_text(self.event.raw_text)
         draft = self._draft()
         arguments = {}
+        if "?" in self.event.raw_text or re.search(r"\b(?:добав|убер|замен|сравн)\w*", text):
+            return None
 
         if re.fullmatch(r"(?:доставка|нужна доставка|доставк(?:ой|у))", text):
             arguments["receiving_type"] = ReceivingType.DELIVERY
@@ -561,7 +659,7 @@ class AssistantToolExecutor:
         return draft
 
     def _tool_set_cart_item(self, args: SetCartItemArgs) -> dict:
-        if not self._message_has_quantity(self.event.raw_text):
+        if not self._message_has_quantity(self.event.raw_text, args.quantity):
             return {
                 "ok": False,
                 "error": {
@@ -616,16 +714,30 @@ class AssistantToolExecutor:
         return self._cart_payload(draft)
 
     @staticmethod
-    def _message_has_quantity(text: str) -> bool:
+    def _message_has_quantity(text: str, expected=None) -> bool:
+        text = re.sub(r"[\w.+-]+@[\w.-]+", "", text)
+        text = re.sub(r"(?<!\d)(?:[+78][\s().-]*)?9(?:[\s().-]*\d){9}(?!\d)", "", text)
+        text = re.sub(r"\b(?:улица|ул\.?|дом|д\.?|проспект)\s+[^;\n]+", "", text, flags=re.I)
         normalized = normalize_product_text(text)
-        if re.search(r"\d+(?:[.,]\d+)?", text):
-            return True
-        number_words = (
-            "один", "одна", "одно", "одну", "два", "две", "три", "четыре",
-            "пять", "шесть", "семь", "восемь", "девять", "десять", "полкило",
-            "полкилограмма", "половина", "половину",
-        )
-        return any(re.search(rf"\b{word}\b", normalized) for word in number_words)
+        numeric = [Decimal(value.replace(",", ".")) for value in re.findall(
+            r"\d+(?:[.,]\d+)?", text
+        )]
+        word_values = {
+            "один": Decimal(1), "одна": Decimal(1), "одно": Decimal(1),
+            "одну": Decimal(1), "два": Decimal(2), "две": Decimal(2),
+            "три": Decimal(3), "четыре": Decimal(4), "пять": Decimal(5),
+            "шесть": Decimal(6), "семь": Decimal(7), "восемь": Decimal(8),
+            "девять": Decimal(9), "десять": Decimal(10),
+            "полкило": Decimal("0.5"), "полкилограмма": Decimal("0.5"),
+            "половина": Decimal("0.5"), "половину": Decimal("0.5"),
+        }
+        mentioned = numeric + [
+            value for word, value in word_values.items()
+            if re.search(rf"\b{word}\b", normalized)
+        ]
+        if expected is None:
+            return bool(mentioned)
+        return Decimal(str(expected)) in mentioned
 
     def _tool_remove_cart_item(self, args: RemoveCartItemArgs) -> dict:
         draft = self._prepare_change()
@@ -853,7 +965,12 @@ class AssistantToolExecutor:
             }
             for product in CatalogService.get_active_products().prefetch_related("aliases")
         ]
+        from apps.intake.models import ConversationMemory
+        memory = ConversationMemory.objects.filter(channel=self.event.channel,
+            external_user_id=self.event.external_user_id, conversation_key=self.event.conversation_key).first()
         return {
+            "conversation": {"last_question": memory.last_question, "options": memory.options,
+                "selected_product_code": memory.selected_product_code, "expected_fields": memory.expected_fields} if memory else {},
             "cart": self._cart_payload(),
             "recent_product_search": recent_search or None,
             # Только словарь сопоставления. Цены, наличие и описания модель всё
@@ -861,11 +978,15 @@ class AssistantToolExecutor:
             "catalog_vocabulary": catalog_terms,
         }
 
+    def _visible_orders(self):
+        from apps.orders.access import OrderAccessService
+        return OrderAccessService.visible(channel=self.event.channel, external_user_id=self.event.external_user_id)
+
     def _tool_list_customer_orders(self, args: ListOrdersArgs) -> dict:
         draft = self._draft()
         if draft.customer_id is None:
             return {"ok": False, "error": {"code": "customer_required", "message": "Сначала нужен телефон или email клиента"}}
-        orders = Order.objects.filter(customer_id=draft.customer_id).prefetch_related("items").order_by("-created_at")[: args.limit]
+        orders = self._visible_orders().prefetch_related("items").order_by("-created_at")[: args.limit]
         return {"ok": True, "orders": [self._order_payload(order) for order in orders]}
 
     def cancellation_action(self):
@@ -950,8 +1071,7 @@ class AssistantToolExecutor:
         active_orders = []
         if draft.customer_id:
             orders = (
-                Order.objects.filter(
-                    customer_id=draft.customer_id,
+                self._visible_orders().filter(
                     order_status__in=[
                         OrderStatus.NEW,
                         OrderStatus.ASSEMBLED,
@@ -1043,8 +1163,7 @@ class AssistantToolExecutor:
                 "ok": False,
                 "error": {"code": "customer_required", "message": "Не удалось определить клиента."},
             }
-        order = Order.objects.filter(
-            customer_id=draft.customer_id,
+        order = self._visible_orders().filter(
             public_number=args.order_number,
         ).first()
         if order is None:
@@ -1080,6 +1199,9 @@ class AssistantToolExecutor:
         )
         if payment is not None:
             PaymentService.cancel_payment(payment)
+            order.refresh_from_db()
+            if order.payment_status == PaymentStatus.PAID:
+                return {"ok": False, "error": {"code": "paid_order_requires_manager", "message": "Оплата уже прошла. Отмену и возврат проверит менеджер."}}
         source = self.event.channel if self.event.channel in StatusChangeSource.values else StatusChangeSource.AUTOMATIC
         OrderService.change_status(
             order,
@@ -1139,7 +1261,7 @@ class AssistantToolExecutor:
         draft = self._prepare_change()
         if draft.customer_id is None:
             return {"ok": False, "error": {"code": "customer_required", "message": "Для повтора заказа нужно идентифицировать клиента"}}
-        orders = Order.objects.filter(customer_id=draft.customer_id).prefetch_related("items__product").order_by("-created_at")
+        orders = self._visible_orders().prefetch_related("items__product").order_by("-created_at")
         order = orders.filter(public_number=args.order_number).first() if args.order_number else orders.first()
         if order is None:
             return {"ok": False, "error": {"code": "order_not_found", "message": "Подходящий прошлый заказ не найден"}}
@@ -1198,15 +1320,18 @@ class AssistantToolExecutor:
             order = DraftOrderConversionService.convert(draft)
         payment_url = ""
         if settings.YOOKASSA_ENABLED and order.payment_method == PaymentMethod.CARD_PREPAYMENT:
-            payment_url = PaymentService.ensure_payment_link(order).confirmation_url
+            try:
+                payment_url = PaymentService.ensure_payment_link(order).confirmation_url
+            except PaymentError:
+                return {"ok": True, "order_number": order.public_number, "total_amount": str(order.total_amount),
+                    "payment_url": "", "payment_pending": True, "message": "Заказ сохранён. Ссылка оплаты временно недоступна; запросите её повторно."}
         return {"ok": True, "order_number": order.public_number, "total_amount": str(order.total_amount), "payment_url": payment_url, "message": "Ваш заказ оформлен. При необходимости наш менеджер свяжется с вами."}
 
     def _tool_get_payment_link(self, args: PaymentLinkArgs) -> dict:
         draft = self._draft()
         if draft.customer_id is None:
             return {"ok": False, "error": {"code": "customer_required", "message": "Сначала нужно идентифицировать клиента"}}
-        order = Order.objects.filter(
-            customer_id=draft.customer_id,
+        order = self._visible_orders().filter(
             public_number=args.order_number,
         ).first()
         if order is None:

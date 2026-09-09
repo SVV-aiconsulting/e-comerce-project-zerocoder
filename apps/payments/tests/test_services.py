@@ -195,6 +195,8 @@ def test_refund_is_created_for_successful_payment(
         refund = PaymentService.create_refund(
             payment,
             amount=Decimal("100.00"),
+            lines={"0": "1"},
+            operation_id="7402f130-f624-4f47-bfa6-f198ef86de6a",
             reason="Тест",
             client=client,
         )

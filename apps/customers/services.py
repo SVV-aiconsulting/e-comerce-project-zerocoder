@@ -393,13 +393,10 @@ class CustomerService:
                 conflicts_created=conflicts,
             )
 
-        conflicts = CustomerService.update_customer_contacts(
-            customer=customer,
-            channel=Channel.WEBSITE,
-            external_user_id=external_user_id,
-            phone=normalized_phone,
-            email=normalized_email,
-        )
+        # Unverified guest input belongs to the order, never overwrites a CRM identity.
+        conflicts = CustomerService.record_contact_conflicts(customer=customer,
+            channel=Channel.WEBSITE, external_user_id=external_user_id,
+            phone=normalized_phone, email=normalized_email)
         return CustomerIdentificationResult(
             customer=customer,
             status="identified",

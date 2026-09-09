@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from apps.common.enums import Channel, CustomerSource, CustomerStatus
 from apps.common.models import TimeStampedModel
@@ -258,3 +259,60 @@ class CustomerIdentityConflict(TimeStampedModel):
             f"{self.get_contact_type_display()} {self.contact_value}: "
             f"{self.source_customer} ↔ {self.matched_customer}"
         )
+
+
+class WebAccount(TimeStampedModel):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    email = models.EmailField(max_length=320, unique=True)
+    phone_login = models.CharField(max_length=11, null=True, blank=True, unique=True)
+    name = models.CharField(max_length=255, blank=True)
+    customer = models.ForeignKey(Customer, null=True, blank=True, on_delete=models.SET_NULL)
+    verified_at = models.DateTimeField(default=timezone.now)
+    basket_user_id = models.CharField(max_length=128, blank=True)
+
+
+class WebSessionBinding(TimeStampedModel):
+    website_user_id = models.CharField(max_length=128, unique=True)
+    account = models.ForeignKey(WebAccount, on_delete=models.CASCADE)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+
+class OrderAccessGrant(TimeStampedModel):
+    account = models.ForeignKey(WebAccount, on_delete=models.CASCADE, related_name="order_grants")
+    order = models.OneToOneField("orders.Order", on_delete=models.CASCADE, related_name="access_grant")
+    reason = models.CharField(max_length=255)
+    granted_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+
+
+class HistoryLinkRequest(TimeStampedModel):
+    account = models.ForeignKey(WebAccount, on_delete=models.CASCADE)
+    order = models.ForeignKey("orders.Order", on_delete=models.CASCADE)
+    status = models.CharField(max_length=16, default="pending", choices=[("pending", "Ожидает"), ("approved", "Подтверждено"), ("rejected", "Отклонено")])
+    reason = models.CharField(max_length=255, blank=True)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["account", "order"], name="unique_history_request")]
+
+
+class LoginCode(TimeStampedModel):
+    public_id = models.UUIDField(default=__import__("uuid").uuid4, unique=True, editable=False)
+    session_key = models.CharField(max_length=64)
+    email = models.EmailField(max_length=320, blank=True)
+    target_hash = models.CharField(max_length=64, db_index=True)
+    ip_hash = models.CharField(max_length=64, db_index=True)
+    code_hash = models.CharField(max_length=256)
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    consumed_at = models.DateTimeField(null=True)
+    delivered = models.BooleanField(default=False)
+    purpose = models.CharField(max_length=24, default="login")
+    account = models.ForeignKey(
+        WebAccount,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="login_codes",
+    )
+
+
+class AuthGuard(models.Model):
+    key = models.CharField(max_length=80, unique=True)

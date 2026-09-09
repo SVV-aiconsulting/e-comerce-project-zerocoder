@@ -81,6 +81,9 @@ class StorefrontApiClient:
                 status_code=response.status_code,
             ) from exc
 
+    async def heartbeat(self) -> dict:
+        return await self._request("POST", "/api/internal/heartbeat/", json={"name": "bot:telegram"})
+
     async def health(self) -> dict:
         return await self._request("GET", "/api/health/", with_token=False)
 

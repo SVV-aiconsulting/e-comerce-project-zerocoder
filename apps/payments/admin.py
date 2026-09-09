@@ -1,4 +1,11 @@
+import json
+import uuid
+
 from django.contrib import admin, messages
+from django.http import HttpResponseRedirect
+from django.template.response import TemplateResponse
+from django.urls import path, reverse
+from django.utils.html import format_html
 
 from apps.payments.exceptions import PaymentError
 from apps.payments.models import Payment, PaymentWebhookEvent, Refund
@@ -43,7 +50,64 @@ class PaymentAdmin(admin.ModelAdmin):
         "paid_notification_error",
         "created_at",
         "updated_at",
+        "partial_refund_link",
     )
+
+    def get_urls(self):
+        return [
+            path(
+                "<int:payment_id>/partial-refund/",
+                self.admin_site.admin_view(self.partial_refund_view),
+                name="payments_payment_partial_refund",
+            )
+        ] + super().get_urls()
+
+    @admin.display(description="Частичный возврат")
+    def partial_refund_link(self, obj):
+        if not obj or not obj.pk:
+            return "Сначала сохраните платёж"
+        url = reverse("admin:payments_payment_partial_refund", args=[obj.pk])
+        return format_html('<a class="button" href="{}">Выбрать позиции возврата</a>', url)
+
+    def partial_refund_view(self, request, payment_id):
+        payment = self.get_queryset(request).select_related("order").filter(pk=payment_id).first()
+        if payment is None:
+            from django.http import Http404
+
+            raise Http404
+        operation_id = request.POST.get("operation_id") or str(uuid.uuid4())
+        lines_text = request.POST.get("lines", "")
+        if request.method == "POST":
+            try:
+                lines = json.loads(lines_text)
+                if not isinstance(lines, dict):
+                    raise ValueError
+                PaymentService.create_refund(
+                    payment,
+                    lines=lines,
+                    operation_id=operation_id,
+                    reason=(request.POST.get("reason") or "Частичный возврат из Django Admin"),
+                )
+            except (ValueError, json.JSONDecodeError, PaymentError) as exc:
+                self.message_user(
+                    request,
+                    str(exc) if str(exc) else "Позиции должны быть JSON-объектом.",
+                    level=messages.ERROR,
+                )
+            else:
+                self.message_user(request, "Возврат создан или синхронизирован.", messages.SUCCESS)
+                return HttpResponseRedirect(reverse("admin:payments_payment_change", args=[payment.pk]))
+        original_items = (payment.receipt_data or {}).get("items", [])
+        context = {
+            **self.admin_site.each_context(request),
+            "title": f"Частичный возврат: {payment.order.public_number}",
+            "payment": payment,
+            "receipt_items": list(enumerate(original_items)),
+            "operation_id": operation_id,
+            "lines": lines_text,
+            "opts": self.model._meta,
+        }
+        return TemplateResponse(request, "admin/payments/payment/partial_refund.html", context)
 
     @admin.action(description="Создать/повторить ссылки ЮKassa (до 20)")
     def create_payment_links(self, request, queryset):
@@ -64,7 +128,6 @@ class PaymentAdmin(admin.ModelAdmin):
             queryset,
             lambda item: PaymentService.create_refund(
                 item,
-                amount=item.amount,
                 reason="Полный возврат из Django Admin",
             ),
         )

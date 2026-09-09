@@ -88,6 +88,9 @@ async def show_preview(api, peer_id: int, user_id: int, storefront_api) -> None:
             external_user_id=session["external_user_id"],
             customer_id=session["customer_id"],
             receiving_type=session["receiving_type"],
+            delivery_address=session.get("delivery_address") or "",
+            payment_method=session.get("payment_method") or "card_prepayment",
+            customer_comment=session.get("customer_comment") or "",
         )
     except (ApiError, BackendUnavailableError) as exc:
         await answer_api_error(api, peer_id, exc)
@@ -116,6 +119,7 @@ async def confirm_order(api, peer_id: int, user_id: int, storefront_api) -> None
         "payment_method": session["payment_method"],
         "delivery_address": session.get("delivery_address") or "",
         "customer_comment": session.get("customer_comment") or "",
+        "preview_id": (session.get("checkout_preview") or {}).get("preview_id"),
         "is_new_customer": session.get("is_new_customer", False),
     }
 

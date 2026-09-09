@@ -1,12 +1,11 @@
-from django.http import HttpResponse
+from django.shortcuts import render
 from django.views import View
-
+from apps.orders.access import OrderAccessService
 
 class PaymentReturnView(View):
-    """Возврат клиента в магазин; факт оплаты подтверждает только сервер."""
-
     def get(self, request):
-        return HttpResponse(
-            "Оплата обрабатывается. Статус заказа обновится после подтверждения платёжным сервисом.",
-            content_type="text/plain; charset=utf-8",
-        )
+        identity = request.session.get("website_external_user_id", "")
+        orders = OrderAccessService.visible(channel="website", external_user_id=identity) if identity else None
+        number = request.GET.get("order")
+        order = orders.filter(public_number=number).first() if orders is not None and number else (orders.order_by("-created_at").first() if orders is not None else None)
+        return render(request, "payments/return.html", {"order":order})

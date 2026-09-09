@@ -1,0 +1,46 @@
+{% load static %}
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Статус оплаты · WebMarket</title>
+  <link rel="stylesheet" href="{% static 'website/css/storefront.css' %}?v=20260908">
+</head>
+<body class="payment-return-page">
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/"><span class="brand-mark">WebMarket</span><span class="brand-tag">Море</span></a>
+      <a class="btn btn-ghost" href="/">Вернуться в магазин</a>
+    </div>
+  </header>
+  <main class="payment-return">
+    <p class="account-eyebrow">Безопасная оплата</p>
+    <h1>Статус оплаты</h1>
+    {% if order %}
+      <section class="payment-status-card" aria-labelledby="payment-order-title">
+        <p class="payment-status-card__label">Заказ</p>
+        <h2 id="payment-order-title">{{ order.public_number }}</h2>
+        <p class="payment-status-card__amount">{{ order.total_amount }} ₽</p>
+        <div class="payment-status-card__state">
+          <span>Текущий статус</span>
+          <strong id="payment-state" data-order="{{ order.public_number }}">{{ order.get_payment_status_display }}</strong>
+        </div>
+        <p class="payment-status-card__note">Статус подтверждает платёжный сервис. Обновление может занять немного времени.</p>
+        <button class="btn btn--primary" id="refresh-payment" type="button">Проверить ещё раз</button>
+      </section>
+    {% else %}
+      <section class="payment-status-card payment-status-card--empty">
+        <p class="payment-status-card__label">Защищённый просмотр</p>
+        <h2>Заказ не выбран</h2>
+        <p class="payment-status-card__note">Откройте заказ в исходном канале или войдите в кабинет. Возврат на эту страницу сам по себе не подтверждает оплату.</p>
+      </section>
+    {% endif %}
+    <nav class="payment-return__links" aria-label="Следующие действия">
+      <a href="/account/">Мои заказы</a>
+      <a href="/">Продолжить покупки</a>
+    </nav>
+  </main>
+  <script src="{% static 'website/js/payment-return.js' %}" defer></script>
+</body>
+</html>

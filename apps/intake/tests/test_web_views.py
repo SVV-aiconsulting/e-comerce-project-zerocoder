@@ -1,3 +1,4 @@
+from apps.api.tests.checkout_helpers import confirmed_post
 import json
 from decimal import Decimal
 
@@ -337,7 +338,7 @@ def test_website_cart_and_checkout_go_through_backend(client):
         content_type="application/json",
     )
     cart = client.get("/store/cart/")
-    created = client.post(
+    created = confirmed_post(client,
         "/store/orders/",
         data=json.dumps(
             {
@@ -400,7 +401,7 @@ def test_website_checkout_resolves_each_form_contact_without_reusing_cart_custom
         ),
         content_type="application/json",
     )
-    created = client.post(
+    created = confirmed_post(client,
         "/store/orders/",
         data=json.dumps(
             {
@@ -492,7 +493,7 @@ def test_website_delivery_preview_is_dynamic_and_quote_is_used_by_order(
         content_type="application/json",
     )
     quote_id = preview.json()["delivery_quote_id"]
-    created = client.post(
+    created = confirmed_post(client,
         "/store/orders/",
         data=json.dumps(
             {

@@ -202,6 +202,13 @@ class PaymentService:
 
         with transaction.atomic():
             locked_order = type(order).objects.select_for_update().get(pk=order.pk)
+            if locked_order.order_status == "cancelled":
+                raise PaymentDataError("Отменённый заказ нельзя оплатить")
+            succeeded = locked_order.payments.filter(state=PaymentState.SUCCEEDED).first()
+            if succeeded:
+                return succeeded
+            if locked_order.payment_status == PaymentStatus.PAID:
+                raise PaymentDataError("Заказ уже оплачен")
             payment = (
                 Payment.objects.select_for_update()
                 .filter(
@@ -235,7 +242,11 @@ class PaymentService:
             update = {"last_error": str(exc), "updated_at": timezone.now()}
             if not exc.retryable:
                 update["state"] = PaymentState.FAILED
-            Payment.objects.filter(pk=payment.pk).update(**update)
+            # A webhook may have confirmed the payment while the create request
+            # timed out locally. Never overwrite that terminal success.
+            Payment.objects.filter(pk=payment.pk).exclude(
+                state=PaymentState.SUCCEEDED
+            ).update(**update)
             raise
         return cls._apply_provider_payment(payment.pk, payload)
 
@@ -245,17 +256,25 @@ class PaymentService:
         if not external_id:
             raise PaymentDataError("ЮKassa не вернула ID платежа")
         with transaction.atomic():
-            payment = Payment.objects.select_for_update().select_related("order").get(
-                pk=payment_id
-            )
-            was_paid = payment.order.payment_status == PaymentStatus.PAID
+            payment_ref = Payment.objects.only("order_id").get(pk=payment_id)
+            from apps.orders.models import Order
+
+            order = Order.objects.select_for_update().get(pk=payment_ref.order_id)
+            payment = Payment.objects.select_for_update().get(pk=payment_id)
+            payment.order = order
+            was_paid = order.payment_status == PaymentStatus.PAID
             cls._validate_provider_payment(payment, payload)
             confirmation = payload.get("confirmation")
             confirmation = confirmation if isinstance(confirmation, dict) else {}
             cancellation = payload.get("cancellation_details")
             cancellation = cancellation if isinstance(cancellation, dict) else {}
             payment.external_id = external_id
-            payment.state = _payment_state(str(payload.get("status", "")))
+            next_state = _payment_state(str(payload.get("status", "")))
+            if payment.state == PaymentState.SUCCEEDED and next_state != PaymentState.SUCCEEDED:
+                return payment
+            if payment.state == PaymentState.CANCELED and next_state in (PaymentState.PENDING, PaymentState.WAITING_FOR_CAPTURE):
+                return payment
+            payment.state = next_state
             payment.confirmation_url = str(confirmation.get("confirmation_url", ""))
             payment.expires_at = _parse_date(payload.get("expires_at"))
             payment.paid_at = _parse_date(payload.get("captured_at"))
@@ -284,6 +303,8 @@ class PaymentService:
 
     @staticmethod
     def _validate_provider_payment(payment: Payment, payload: dict) -> None:
+        if payment.external_id and payload.get("id") != payment.external_id:
+            raise PaymentDataError("ID платежа не совпадает с сохранённым")
         amount = payload.get("amount")
         amount = amount if isinstance(amount, dict) else {}
         if _money(amount.get("value"), field="amount.value") != payment.amount:
@@ -304,6 +325,10 @@ class PaymentService:
             PaymentState.CANCELED: PaymentStatus.UNPAID,
             PaymentState.FAILED: PaymentStatus.UNPAID,
         }[payment_state]
+        if order.payments.filter(state=PaymentState.SUCCEEDED).exists() or order.payment_status == PaymentStatus.PAID:
+            target = PaymentStatus.PAID
+        elif order.payments.filter(state__in=[PaymentState.PENDING, PaymentState.WAITING_FOR_CAPTURE]).exists():
+            target = PaymentStatus.WAITING
         if order.payment_status != target:
             order.payment_status = target
             order.save(update_fields=["payment_status", "updated_at"])
@@ -329,62 +354,10 @@ class PaymentService:
         return cls._apply_provider_payment(payment.pk, payload)
 
     @classmethod
-    def create_refund(
-        cls,
-        payment: Payment,
-        *,
-        amount: Decimal,
-        reason: str = "",
-        client: YooKassaClient | None = None,
-    ) -> Refund:
-        if payment.state != PaymentState.SUCCEEDED or not payment.external_id:
-            raise PaymentDataError("Возврат возможен только для успешно оплаченного платежа")
-        amount = _money(amount, field="refund.amount")
-        if amount <= 0:
-            raise PaymentDataError("Сумма возврата должна быть больше нуля")
-        already_refunded = (
-            payment.refunds.filter(state__in=[RefundState.PENDING, RefundState.SUCCEEDED])
-            .aggregate(total=models.Sum("amount"))["total"]
-            or Decimal("0")
-        )
-        if already_refunded + amount > payment.amount:
-            raise PaymentDataError("Сумма возвратов превышает сумму платежа")
-        refund = Refund.objects.create(
-            payment=payment,
-            amount=amount,
-            currency=payment.currency,
-            reason=reason[:256],
-            receipt_data=_receipt_for_order(
-                payment.order,
-                payment_mode="full_payment",
-            ),
-        )
-        api_client = client or YooKassaClient()
-        payload = {
-            "payment_id": payment.external_id,
-            "amount": {"value": f"{amount:.2f}", "currency": payment.currency},
-            "description": reason[:256] or f"Возврат по заказу {payment.order.public_number}",
-            "receipt": refund.receipt_data,
-        }
-        try:
-            response = api_client.create_refund(
-                payload, idempotence_key=str(refund.idempotence_key)
-            )
-        except YooKassaAPIError as exc:
-            refund.last_error = str(exc)
-            if not exc.retryable:
-                refund.state = RefundState.FAILED
-            refund.save()
-            raise
-        external_id = str(response.get("id", "")).strip()
-        if not external_id:
-            raise PaymentDataError("ЮKassa не вернула ID возврата")
-        refund.external_id = external_id
-        refund.state = _refund_state(str(response.get("status", "")))
-        refund.provider_payload = response
-        refund.last_error = ""
-        refund.save()
-        return refund
+    def create_refund(cls, payment, *, amount=None, lines=None, operation_id=None, reason="", client=None):
+        from apps.payments.refunds import create_refund
+        return create_refund(payment, amount=amount, lines=lines, operation_id=operation_id,
+            reason=reason, client=client)
 
 
 class YooKassaWebhookService:

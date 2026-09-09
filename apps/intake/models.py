@@ -32,6 +32,9 @@ class OrderDraft(TimeStampedModel):
     """Проверяемый черновик заказа, формируемый в диалоге с клиентом."""
 
     public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    cart = models.ForeignKey("carts.Cart", null=True, blank=True, on_delete=models.PROTECT)
+    synced_cart_revision = models.PositiveBigIntegerField(null=True, blank=True)
+    checkout_preview = models.ForeignKey("carts.CheckoutPreview", null=True, blank=True, on_delete=models.PROTECT)
     customer = models.ForeignKey(
         Customer,
         on_delete=models.SET_NULL,
@@ -581,3 +584,15 @@ class AssistantToolCall(TimeStampedModel):
                 name="intake_unique_tool_call_index",
             )
         ]
+
+
+class ConversationMemory(TimeStampedModel):
+    channel = models.CharField(max_length=16)
+    external_user_id = models.CharField(max_length=255)
+    conversation_key = models.CharField(max_length=255)
+    last_question = models.TextField(blank=True)
+    options = models.JSONField(default=list)
+    selected_product_code = models.CharField(max_length=32, blank=True)
+    expected_fields = models.JSONField(default=list)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["channel", "external_user_id", "conversation_key"], name="unique_conversation_memory")]

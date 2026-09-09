@@ -17,6 +17,14 @@ from apps.orders.pricing import PricingService
 class OrderService:
     """Сервис создания и управления заказами."""
 
+    ALLOWED_STATUS_TRANSITIONS = {
+        OrderStatus.NEW: {OrderStatus.ASSEMBLED, OrderStatus.CANCELLED},
+        OrderStatus.ASSEMBLED: {OrderStatus.DELIVERING, OrderStatus.CANCELLED},
+        OrderStatus.DELIVERING: {OrderStatus.COMPLETED},
+        OrderStatus.COMPLETED: set(),
+        OrderStatus.CANCELLED: set(),
+    }
+
     @staticmethod
     def save_customer_snapshot(
         customer: Customer,
@@ -166,9 +174,12 @@ class OrderService:
         CartService.mark_as_ordered(cart)
         CustomerService.update_stats_after_order(customer, totals.total_amount)
 
+        from apps.orders.access import OrderAccessService
+        OrderAccessService.bind_created(order)
         return order
 
     @staticmethod
+    @transaction.atomic
     def change_status(
         order: Order,
         new_status: str,
@@ -177,9 +188,24 @@ class OrderService:
         changed_by=None,
         comment: str = "",
     ) -> Order:
+        order = Order.objects.select_for_update().get(pk=order.pk)
         old_status = order.order_status
         if old_status == new_status:
             return order
+
+        if new_status not in OrderService.ALLOWED_STATUS_TRANSITIONS.get(old_status, set()):
+            raise ValueError(
+                f"Недопустимый переход статуса заказа: {old_status} -> {new_status}"
+            )
+        if new_status == OrderStatus.CANCELLED:
+            from apps.common.enums import PaymentStatus
+            from apps.payments.models import PaymentState
+
+            if (
+                order.payment_status == PaymentStatus.PAID
+                or order.payments.filter(state=PaymentState.SUCCEEDED).exists()
+            ):
+                raise ValueError("Оплаченный заказ нельзя отменить без возврата")
 
         order.order_status = new_status
         order.save(update_fields=["order_status", "updated_at"])

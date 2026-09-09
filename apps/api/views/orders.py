@@ -51,35 +51,13 @@ class CreateOrderView(APIView):
             raise PaymentDataError(
                 "Для онлайн-оплаты укажите email: на него ЮKassa отправит электронный чек"
             )
-        quote = CheckoutDeliveryService.selected_quote(
-            cart=cart,
-            receiving_type=data["receiving_type"],
-            delivery_address=data.get("delivery_address", ""),
-            quote_id=data.get("delivery_quote_id"),
-        )
-        delivery_cost_override = CheckoutDeliveryService.delivery_cost_for_quote(
-            cart=cart,
-            customer=customer,
-            quote=quote,
-        )
-
-        order = OrderService.create_order_from_cart(
-            cart,
-            customer=customer,
-            channel=data["channel"],
-            receiving_type=data["receiving_type"],
-            payment_method=data["payment_method"],
-            desired_date=data.get("desired_date"),
-            desired_time_interval=data.get("desired_time_interval", ""),
+        from apps.carts.checkout import CheckoutService
+        order = CheckoutService.create_order(preview_id=data.get("preview_id"),
+            channel=data["channel"], external_user_id=data["external_user_id"], customer=customer,
+            receiving_type=data["receiving_type"], payment_method=data["payment_method"],
             delivery_address=data.get("delivery_address", ""),
             customer_comment=data.get("customer_comment", ""),
-            customer_email_snapshot=data.get("customer_email") or None,
-            delivery_cost_override=delivery_cost_override,
-            is_new_customer=data.get("is_new_customer", False),
-            status_source=StatusChangeSource.API,
-        )
-        CheckoutDeliveryService.attach_quote(quote, order)
-
+            status_source=StatusChangeSource.API)
         order = order_selectors.get_order_by_number(order.public_number)
         return Response(OrderSerializer(order).data, status=201)
 
@@ -102,7 +80,8 @@ class OrderDetailView(APIView):
         order = order_selectors.get_order_by_number(public_number)
         if order is None:
             raise OrderNotFound()
-        if order.customer_id != customer.pk:
+        from apps.orders.access import OrderAccessService
+        if not OrderAccessService.visible(channel=data["channel"], external_user_id=data["external_user_id"]).filter(pk=order.pk).exists():
             raise OrderAccessDenied()
         return Response(OrderSerializer(order).data)
 
@@ -126,5 +105,6 @@ class CustomerOrdersView(APIView):
         if customer.pk != identity_customer.pk:
             raise OrderAccessDenied()
 
-        orders = order_selectors.get_orders_for_customer(customer.pk)
+        from apps.orders.access import OrderAccessService
+        orders = OrderAccessService.visible(channel=data["channel"], external_user_id=data["external_user_id"]).filter(customer=customer).order_by("-created_at")
         return Response(OrderListSerializer(orders, many=True).data)

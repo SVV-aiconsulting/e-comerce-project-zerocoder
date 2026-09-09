@@ -295,6 +295,8 @@ class Shipment(TimeStampedModel):
     delivery_from = models.DateTimeField(null=True, blank=True, verbose_name="Доставка с")
     delivery_to = models.DateTimeField(null=True, blank=True, verbose_name="Доставка до")
     last_synced_at = models.DateTimeField(null=True, blank=True, verbose_name="Синхронизировано")
+    next_sync_at = models.DateTimeField(null=True, blank=True)
+    sync_failures = models.PositiveIntegerField(default=0)
     last_error = models.TextField(blank=True, verbose_name="Последняя ошибка")
     creation_payload = models.JSONField(default=dict, blank=True, verbose_name="Payload создания")
     provider_payload = models.JSONField(default=dict, blank=True, verbose_name="Последний ответ")

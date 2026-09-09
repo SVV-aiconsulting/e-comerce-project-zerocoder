@@ -62,6 +62,8 @@ def test_full_storefront_flow(settings, product, delivery_rule):
             "external_user_id": "e2e-user",
             "customer_id": customer_id,
             "receiving_type": ReceivingType.DELIVERY,
+            "delivery_address": "ул. E2E, 1",
+            "payment_method": PaymentMethod.CASH_ON_DELIVERY,
         },
         format="json",
     )
@@ -71,6 +73,7 @@ def test_full_storefront_flow(settings, product, delivery_rule):
     order_response = client.post(
         "/api/orders/",
         {
+            "preview_id": str(preview_response.data["preview_id"]),
             "channel": Channel.TELEGRAM,
             "external_user_id": "e2e-user",
             "customer_id": customer_id,

@@ -81,6 +81,9 @@ class StorefrontApiClient:
                 status_code=response.status_code,
             ) from exc
 
+    async def heartbeat(self) -> dict:
+        return await self._request("POST", "/api/internal/heartbeat/", json={"name": "bot:vk"})
+
     async def health(self) -> dict:
         return await self._request("GET", "/api/health/", with_token=False)
 
@@ -241,6 +244,9 @@ class StorefrontApiClient:
         external_user_id: str,
         customer_id: int,
         receiving_type: str,
+        delivery_address: str = "",
+        payment_method: str = "card_prepayment",
+        customer_comment: str = "",
     ) -> dict:
         return await self._request(
             "POST",
@@ -250,6 +256,9 @@ class StorefrontApiClient:
                 "external_user_id": external_user_id,
                 "customer_id": customer_id,
                 "receiving_type": receiving_type,
+                "delivery_address": delivery_address,
+                "payment_method": payment_method,
+                "customer_comment": customer_comment,
             },
         )
 

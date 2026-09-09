@@ -33,7 +33,13 @@ from apps.intake.enums import (
     OrderDraftStatus,
     ResolutionSource,
 )
-from apps.intake.models import AssistantMessage, AssistantToolCall, AssistantTurn, OrderDraftItem
+from apps.intake.models import (
+    AssistantMessage,
+    AssistantToolCall,
+    AssistantTurn,
+    ConversationMemory,
+    OrderDraftItem,
+)
 from apps.intake.processors import InboundEventProcessor
 from apps.intake.responses import InboundEventResponseService
 from apps.intake.services import InboundEventService, OrderDraftService
@@ -165,6 +171,62 @@ def test_full_catalog_response_contains_price_unit_and_minimum():
     assert "минимальный заказ: 1 килограмм" in content
 
 
+@pytest.mark.django_db
+def test_consultant_resolves_price_followup_from_server_backed_options(
+    customer, product, settings
+):
+    settings.AI_CONSULTANT_ENABLED = True
+    other = Product.objects.create(
+        public_code="TEST-TROUT",
+        name="Форель",
+        unit=product.unit,
+        min_quantity=product.min_quantity,
+        base_price=Decimal("80.00"),
+        is_active=True,
+    )
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="referential-price",
+        external_user_id="12345",
+        conversation_key="referential-dialog",
+        customer=customer,
+        raw_text="Какой из них дешевле?",
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    ConversationMemory.objects.create(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        options=[
+            {"code": product.public_code, "name": product.name},
+            {"code": other.public_code, "name": other.name},
+        ],
+    )
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    action = backend.referential_catalog_action()
+    assert action == (
+        "compare_products",
+        {"product_codes": [product.public_code, other.public_code]},
+    )
+    result = backend.execute(*action, call_index=1)
+    content = OrderAssistantService._render_catalog(result)
+    assert "Самая низкая цена" in content
+    assert "Форель — 80.00 ₽" in content
+
+    backend.event.raw_text = "Расскажите про второй"
+    assert backend.referential_catalog_action() == (
+        "search_products",
+        {"query": "Форель", "limit": 1},
+    )
+
+
 def test_website_identity_request_is_a_separate_natural_language_step():
     message = AssistantToolExecutor._missing_fields_message(["customer"])
 
@@ -228,7 +290,7 @@ def test_cart_update_response_uses_full_backend_cart_not_model_claim():
 
 
 @pytest.mark.django_db
-def test_model_history_keeps_user_context_but_redacts_assistant_facts(
+def test_model_history_preserves_real_questions_and_prior_answers(
     customer, settings
 ):
     settings.AI_ASSISTANT_HISTORY_MESSAGES = 20
@@ -267,8 +329,8 @@ def test_model_history_keeps_user_context_but_redacts_assistant_facts(
     assert any(row["content"] == "Какая есть икра?" for row in history)
     assistant_history = [row["content"] for row in history if row["role"] == "assistant"]
     assert assistant_history
-    assert all("ошибочно краб" not in content for content in assistant_history)
-    assert all("backend-инструмент" in content for content in assistant_history)
+    assert assistant_history == ["Икра и ошибочно краб, цена 999 ₽"]
+    # Historical text is context, not authoritative product data.
 
 
 @pytest.mark.django_db
@@ -1174,13 +1236,7 @@ def test_tools_agent_full_checkout_is_stateful_audited_and_idempotent(
     assert Payment.objects.count() == 1
 
     last_prompt_messages = provider.calls[-1]["messages"]
-    assert not any(
-        "Проверьте заказ:" in message.get("content", "")
-        for message in last_prompt_messages
-    )
-    assert any(
-        "ответ типа order_preview" in message.get("content", "")
-        for message in last_prompt_messages
-    )
+    assert any("Проверьте заказ:" in message.get("content", "") for message in last_prompt_messages)
+    assert "Она не является источником фактов" in provider.calls[-1]["system_prompt"]
     assert product.public_code in provider.calls[-1]["system_prompt"]
     assert all("parameters" in function for function in provider.calls[0]["functions"])

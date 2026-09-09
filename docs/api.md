@@ -1,5 +1,7 @@
 # REST API WebMarket
 
+> Актуальный checkout использует обязательный `preview_id`. Старый запрос подтверждения без связанного снимка получает `409 preview_stale` и должен заново показать расчёт пользователю.
+
 Краткая документация Storefront API для frontend-адаптеров (Telegram, VK, MAX, сайт).
 
 **Адаптеры:** [TELEGRAM_BOT.md](./TELEGRAM_BOT.md) · [VK_BOT.md](./VK_BOT.md)
@@ -98,13 +100,13 @@ curl -X PUT http://localhost:8000/api/cart/items/1/ \
 curl -X POST http://localhost:8000/api/checkout/preview/ \
   -H "Content-Type: application/json" \
   -H "X-Adapter-Token: your-token" \
-  -d '{"channel":"telegram","external_user_id":"123","customer_id":1,"receiving_type":"delivery"}'
+  -d '{"channel":"telegram","external_user_id":"123","customer_id":1,"receiving_type":"delivery","delivery_address":"Москва, ул. Примерная, 1","payment_method":"card_prepayment","contact_email":"buyer@example.com"}'
 
 # 6. Оформить заказ
 curl -X POST http://localhost:8000/api/orders/ \
   -H "Content-Type: application/json" \
   -H "X-Adapter-Token: your-token" \
-  -d '{"channel":"telegram","external_user_id":"123","customer_id":1,"receiving_type":"delivery","payment_method":"card_prepayment","delivery_address":"Москва, ул. Примерная, 1"}'
+  -d '{"channel":"telegram","external_user_id":"123","customer_id":1,"preview_id":"<preview_id из шага 5>","receiving_type":"delivery","payment_method":"card_prepayment","delivery_address":"Москва, ул. Примерная, 1","customer_email":"buyer@example.com"}'
 
 # 7. Детали заказа
 curl "http://localhost:8000/api/orders/WM-XXXXXX/?channel=telegram&external_user_id=123" \
@@ -115,7 +117,20 @@ curl "http://localhost:8000/api/customers/CL-XXXXXX/orders/?channel=telegram&ext
   -H "X-Adapter-Token: your-token"
 ```
 
-Повторный `POST /api/orders/` с тем же `channel + external_user_id` после успешного оформления вернёт `422 empty_cart` — создаётся новая пустая активная корзина.
+Повторный `POST /api/orders/` с тем же `preview_id` идемпотентно возвращает тот же заказ. Для нового checkout создаётся новая активная корзина и новый preview.
+
+## Вход и кабинет сайта
+
+| Метод | Path | Назначение |
+|---|---|---|
+| POST | `/store/auth/code/request/` | Запросить код по email или дополнительному телефону |
+| POST | `/store/auth/code/verify/` | Проверить код в инициировавшей browser-сессии |
+| POST | `/store/auth/logout/` | Отозвать связь и начать новую гостевую сессию |
+| GET/PATCH | `/store/account/` | Профиль, выбор корзины, имя и телефон-логин |
+| GET | `/store/account/orders/` | Разрешённые заказы аккаунта или текущей гостевой сессии |
+| GET | `/store/account/orders/{number}/` | Детали доступного заказа |
+
+Для смены email авторизованный клиент передаёт `purpose: "email_change"` при запросе кода. Сам факт ввода контакта в checkout не меняет email аккаунта и не открывает историю.
 
 ## Формат ошибок
 
@@ -148,6 +163,8 @@ curl "http://localhost:8000/api/customers/CL-XXXXXX/orders/?channel=telegram&ext
 - `customer_context_mismatch` (409) — `customer_id` не соответствует `channel + external_user_id`
 - `cart_customer_mismatch` (409) — попытка работы с корзиной другого клиента
 - `order_access_denied` (403) — заказ или история не принадлежат текущему пользователю канала
+- `preview_stale` (409) — снимок отсутствует, истёк или условия изменились; нужен новый preview
+- `rate_limited` (429) — превышен лимит диалога; время повтора указано в `Retry-After`
 
 ## Демо-данные на VPS
 

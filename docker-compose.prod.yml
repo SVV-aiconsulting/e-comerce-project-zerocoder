@@ -116,6 +116,40 @@ services:
       redis:
         condition: service_healthy
 
+  payment_worker:
+    image: ghcr.io/svv-aiconsulting/e-comerce-project-zerocoder:${WEBMARKET_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: celery -A config worker --loglevel=INFO --queues=payments --pool=solo --hostname=payments@%h
+    env_file: [.env]
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+    mem_limit: 384m
+    cpus: 0.50
+    volumes:
+      - ./.env:/app/.env:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  delivery_worker:
+    image: ghcr.io/svv-aiconsulting/e-comerce-project-zerocoder:${WEBMARKET_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    command: celery -A config worker --loglevel=INFO --queues=delivery --pool=solo --hostname=delivery@%h
+    env_file: [.env]
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+    mem_limit: 256m
+    cpus: 0.50
+    volumes:
+      - ./.env:/app/.env:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   celery_beat:
     image: ghcr.io/svv-aiconsulting/e-comerce-project-zerocoder:${WEBMARKET_IMAGE_TAG:-latest}
     restart: unless-stopped

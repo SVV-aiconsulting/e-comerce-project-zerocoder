@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from apps.common.enums import Channel
 from apps.payments.exceptions import PaymentError
-from apps.payments.models import Payment, PaymentState
+from apps.payments.models import Payment, PaymentState, Refund, RefundState
 from apps.payments.services import PaymentService
 
 
@@ -81,6 +81,31 @@ def sync_pending_payments():
             payment.save(update_fields=["last_error", "updated_at"])
             failed += 1
     return {"selected": len(payments), "synced": synced, "failed": failed}
+
+
+@shared_task(name="payments.sync_pending_refunds")
+def sync_pending_refunds():
+    refunds = list(
+        Refund.objects.filter(state=RefundState.PENDING)
+        .select_related("payment", "payment__order")
+        .order_by("updated_at")[: settings.PAYMENT_SYNC_BATCH_SIZE]
+    )
+    synced = failed = 0
+    for refund in refunds:
+        try:
+            PaymentService.create_refund(
+                refund.payment,
+                lines=refund.allocations,
+                operation_id=refund.idempotence_key,
+                reason=refund.reason,
+            )
+            synced += 1
+        except PaymentError as exc:
+            Refund.objects.filter(pk=refund.pk).update(
+                last_error=f"{type(exc).__name__}: {str(exc)}"[:1000]
+            )
+            failed += 1
+    return {"selected": len(refunds), "synced": synced, "failed": failed}
 
 
 @shared_task(name="payments.dispatch_paid_notifications")

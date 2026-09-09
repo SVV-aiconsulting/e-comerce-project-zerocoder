@@ -291,7 +291,8 @@ class Command(BaseCommand):
             },
         )
         self.stdout.write(
-            f"{'Создано' if created else 'Уже есть'}: правило скидки «{discount_rule.name}»"
+            f"{'Создано' if created else 'Уже есть'}: правило скидки "
+            f"«{discount_rule.name.replace('₽', 'руб.')}»"
         )
 
         self.stdout.write(self.style.SUCCESS("Демонстрационные данные готовы."))

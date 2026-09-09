@@ -239,7 +239,8 @@ CELERY_TASK_ALWAYS_EAGER = env("CELERY_TASK_ALWAYS_EAGER")
 CELERY_TASK_EAGER_PROPAGATES = True
 CELERY_TASK_ROUTES = {
     "intake.*": {"queue": "intake"},
-    "payments.*": {"queue": "intake"},
+    "payments.*": {"queue": "payments"},
+    "delivery.*": {"queue": "delivery"},
 }
 CELERY_BEAT_SCHEDULE = {
     "dispatch-pending-intake-events": {
@@ -256,6 +257,10 @@ CELERY_BEAT_SCHEDULE = {
     },
     "sync-pending-yookassa-payments": {
         "task": "payments.sync_pending",
+        "schedule": float(PAYMENT_SYNC_INTERVAL_SECONDS),
+    },
+    "sync-pending-yookassa-refunds": {
+        "task": "payments.sync_pending_refunds",
         "schedule": float(PAYMENT_SYNC_INTERVAL_SECONDS),
     },
     "dispatch-paid-payment-notifications": {
@@ -322,3 +327,16 @@ CATALOG_MATCH_AUTO_THRESHOLD = env("CATALOG_MATCH_AUTO_THRESHOLD")
 CATALOG_MATCH_MIN_MARGIN = env("CATALOG_MATCH_MIN_MARGIN")
 CATALOG_MATCH_CANDIDATE_THRESHOLD = env("CATALOG_MATCH_CANDIDATE_THRESHOLD")
 INTAKE_MAX_CLARIFICATION_ATTEMPTS = env("INTAKE_MAX_CLARIFICATION_ATTEMPTS")
+
+
+# Roll out narration independently of authorization and checkout safeguards.
+AI_CONSULTANT_ENABLED = env.bool("AI_CONSULTANT_ENABLED", default=False)
+
+CELERY_BEAT_SCHEDULE["sync-shipments"] = {"task": "delivery.sync_shipments", "schedule": 300.0}
+for _queue in ("intake", "payments", "delivery"):
+    CELERY_BEAT_SCHEDULE[f"heartbeat-{_queue}"] = {
+        "task": "ops.heartbeat", "schedule": 30.0, "args": [f"worker:{_queue}"],
+        "options": {"queue": _queue},
+    }
+
+INTAKE_ADMISSION_ENABLED = env.bool("INTAKE_ADMISSION_ENABLED", default=True)

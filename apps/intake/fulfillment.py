@@ -64,6 +64,9 @@ class DraftPricingService:
         if checkout_preview.quote is not None:
             checkout_preview.quote.order_draft = draft
             checkout_preview.quote.save(update_fields=["order_draft", "updated_at"])
+        from apps.carts.checkout import CheckoutService
+        draft.checkout_preview = CheckoutService.record(cart=cart, customer=draft.customer, result=checkout_preview)
+        draft.save(update_fields=["checkout_preview"])
         return OrderDraftService.record_preview(
             draft,
             items_total=totals.items_total,
@@ -88,52 +91,21 @@ class DraftOrderConversionService:
             raise DraftStateError("Для создания заказа нужен клиент")
 
         OrderDraftService.validate_ready_for_preview(locked)
-        cart = CartService.get_or_create_active_cart(
-            channel=locked.channel,
-            external_user_id=locked.external_user_id,
-            customer=locked.customer,
-        )
-        CartService.clear(cart)
-        for item in locked.items.select_related("product").order_by("line_number"):
-            CartService.set_item_quantity(cart, item.product, item.requested_quantity)
-
         source = (
             locked.channel
             if locked.channel in StatusChangeSource.values
             else StatusChangeSource.AUTOMATIC
         )
-        order = OrderService.create_order_from_cart(
-            cart,
-            customer=locked.customer,
-            channel=locked.channel,
-            receiving_type=locked.receiving_type,
-            payment_method=locked.payment_method,
-            desired_date=locked.desired_date,
-            desired_time_interval=locked.desired_time_interval,
-            delivery_address=locked.delivery_address,
-            customer_comment=locked.customer_comment,
-            customer_phone_snapshot=locked.contact_phone,
-            customer_email_snapshot=locked.contact_email,
-            delivery_cost_override=locked.delivery_cost,
-            status_source=source,
-            is_new_customer=locked.customer.orders_count == 0,
-        )
-        quote = (
-            locked.delivery_quotes.filter(status=DeliveryQuoteStatus.SUCCEEDED)
-            .order_by("-created_at")
-            .first()
-        )
-        if quote is not None:
-            quote.order = order
-            quote.status = DeliveryQuoteStatus.SELECTED
-            quote.save(update_fields=["order", "status", "updated_at"])
-            Shipment.objects.create(
-                order=order,
-                quote=quote,
-                environment=quote.environment,
-                status=ShipmentStatus.DRAFT,
-                amount=quote.amount,
-                currency=quote.currency,
-            )
+        from apps.carts.checkout import CheckoutService
+        order = CheckoutService.create_order(
+            preview_id=locked.checkout_preview.public_id if locked.checkout_preview_id else None,
+            channel=locked.channel, external_user_id=locked.external_user_id,
+            customer=locked.customer, status_source=source,
+            is_new_customer=locked.customer.orders_count == 0)
+        if locked.checkout_preview.quote_id:
+            quote = locked.checkout_preview.quote
+            Shipment.objects.get_or_create(order=order, defaults={"quote": quote,
+                "environment": quote.environment, "status": ShipmentStatus.DRAFT,
+                "amount": quote.amount, "currency": quote.currency})
         OrderDraftService.mark_converted(locked, order)
         return order
