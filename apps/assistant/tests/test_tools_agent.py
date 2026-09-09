@@ -992,7 +992,7 @@ def test_consultant_adds_inflected_multiple_products_without_model_guess(
 
 
 @pytest.mark.django_db
-def test_single_message_order_applies_cart_delivery_payment_and_previews(
+def test_single_message_order_applies_address_delivery_payment_and_previews(
     customer, settings, monkeypatch
 ):
     """Email-like orders must preserve every explicit checkout term."""
@@ -1027,10 +1027,7 @@ def test_single_message_order_applies_cart_delivery_payment_and_previews(
         external_user_id="one-message-user",
         conversation_key="one-message-dialog",
         customer=customer,
-        raw_text=(
-            "Привезите завтра 2 упаковки креветок по адресу Москва улица Разина 15. "
-            "Оплата будет картой"
-        ),
+        raw_text="Хочу 2 упаковки креветок по адресу Мурманск Ленина 64. Оплата картой",
     ).event
 
     InboundEventProcessor.process(event.pk)
@@ -1043,12 +1040,50 @@ def test_single_message_order_applies_cart_delivery_payment_and_previews(
     assert list(draft.items.values_list("product__public_code", flat=True)) == ["DEMO-SHRIMP"]
     assert draft.items.get().requested_quantity == Decimal("2")
     assert draft.receiving_type == ReceivingType.DELIVERY
-    assert draft.delivery_address == "Москва улица Разина 15"
+    assert draft.delivery_address == "Мурманск Ленина 64"
     assert draft.payment_method == PaymentMethod.CARD_PREPAYMENT
-    assert draft.desired_date == timezone.localdate() + timedelta(days=1)
+    assert draft.desired_date is None
     assert response["type"] == "order_preview", response
     assert "Проверьте заказ" in response["message"]
     assert "Креветки тигровые" in response["message"]
+    assert provider.calls == []
+
+
+@pytest.mark.django_db
+def test_single_message_order_keeps_address_before_requesting_receipt_email(
+    customer, settings, monkeypatch
+):
+    """A delivery address is not an invalid email while card checkout is open."""
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_CONSULTANT_ENABLED = True
+    settings.YANDEX_DELIVERY_ENABLED = False
+    customer.email = ""
+    customer.save(update_fields=["email", "updated_at"])
+    call_command("load_demo_data")
+    provider = ScriptedProvider([])
+    monkeypatch.setattr("apps.assistant.services.get_gigachat_provider", lambda: provider)
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="one-message-receipt-email",
+        external_user_id="one-message-receipt-user",
+        conversation_key="one-message-receipt-dialog",
+        customer=customer,
+        raw_text="Хочу 2 кг лосося по адресу Мурманск Ленина 64. Оплата картой",
+    ).event
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    draft = event.draft
+    response = InboundEventResponseService.present(event)["response"]
+
+    assert draft.receiving_type == ReceivingType.DELIVERY
+    assert draft.delivery_address == "Мурманск Ленина 64"
+    assert draft.payment_method == PaymentMethod.CARD_PREPAYMENT
+    assert draft.missing_fields == ["contact_email"]
+    assert response["type"] == "checkout_updated"
+    assert "укажите email" in response["message"]
     assert provider.calls == []
 
 

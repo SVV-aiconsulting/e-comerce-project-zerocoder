@@ -851,8 +851,16 @@ class AssistantToolExecutor:
         ):
             arguments["payment_method"] = PaymentMethod.CASH_ON_DELIVERY
 
-        address = self._delivery_address_from_message(self.event.raw_text)
-        if address and (delivery_requested or draft.receiving_type == ReceivingType.DELIVERY):
+        address = self._delivery_address_from_message(
+            self.event.raw_text,
+            allow_unmarked_city_address=(
+                delivery_requested or draft.receiving_type == ReceivingType.DELIVERY
+            ),
+        )
+        # An address is an unambiguous delivery instruction.  It must not be
+        # ignored merely because the customer used "по адресу" instead of the
+        # word "доставка" in the same sentence.
+        if address:
             arguments.update({
                 "receiving_type": ReceivingType.DELIVERY,
                 "delivery_address": address,
@@ -875,18 +883,20 @@ class AssistantToolExecutor:
         return "configure_checkout", arguments
 
     @staticmethod
-    def _delivery_address_from_message(raw_text: str) -> str:
+    def _delivery_address_from_message(
+        raw_text: str, *, allow_unmarked_city_address: bool = False
+    ) -> str:
         """Extract only an address, never the surrounding order request.
 
         A delivery provider must receive ``Москва, улица ...``, not a complete
         sentence that also contains products and payment method.
         """
         match = re.search(
-            r"\b(?:по\s+адресу|адрес(?:у|\s+доставки)?|на)\s+(.+)",
+            r"\b(?P<prefix>по\s+адресу|адрес(?:у|\s+доставки)?|на)\s+(?P<candidate>.+)",
             raw_text,
             flags=re.IGNORECASE,
         )
-        candidate = match.group(1) if match else raw_text
+        candidate = match.group("candidate") if match else raw_text
         candidate = re.split(
             r"(?:[.!?;]|\b(?:оплат\w*|оплач\w*|плат\w*)\b)",
             candidate,
@@ -899,7 +909,21 @@ class AssistantToolExecutor:
             r"шоссе|набережн\w*|дом\w*|д\.)\b",
             normalized,
         )
-        if not has_street or not re.search(r"\d", candidate):
+        # Customers often omit "улица": "Мурманск Ленина 64" is still a
+        # usable address when it follows an explicit address marker.  Keep the
+        # looser form limited to that marker so ordinary product text is never
+        # mistaken for a delivery address.
+        explicit_address_marker = bool(
+            match and not re.fullmatch(r"на", match.group("prefix"), flags=re.I)
+        )
+        city_street_house = re.fullmatch(
+            r"[А-ЯЁA-Zа-яёa-z-]+(?:\s+[А-ЯЁA-Zа-яёa-z-]+){1,4}\s+\d+[А-ЯЁA-Zа-яёa-z/-]*",
+            candidate.strip(),
+        )
+        if not re.search(r"\d", candidate) or not (
+            has_street
+            or ((explicit_address_marker or allow_unmarked_city_address) and city_street_house)
+        ):
             return ""
         return normalize_delivery_address(candidate)
 

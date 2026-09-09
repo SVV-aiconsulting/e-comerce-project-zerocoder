@@ -175,7 +175,10 @@ class OrderAssistantService:
             # let an unrelated message fall through to the conversational
             # model, which would lose the checkout step and ask a generic
             # catalogue question instead.
-            if "contact_email" in (draft.missing_fields or []):
+            # Show an email validation error only when email is the next
+            # required value.  An address or another checkout term in the same
+            # message must be parsed first instead of being rejected as email.
+            if set(draft.missing_fields or []) == {"contact_email"}:
                 cls._save_response(
                     event,
                     "Похоже, адрес email указан неверно. Укажите корректный email "
