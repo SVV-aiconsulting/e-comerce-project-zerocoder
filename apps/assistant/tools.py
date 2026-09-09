@@ -537,7 +537,7 @@ class AssistantToolExecutor:
         products = self._mentioned_products(text)
         asks_catalog = bool(
             re.search(r"\b(?:есть\s+ли|что\s+у\s+вас|како\w*\s+у\s+вас|"
-                      r"подбер\w*|посовет\w*|предлож\w*)\b", text)
+                      r"подбер\w*|посовет\w*|предлож\w*|подойд\w*)\b", text)
             or re.search(r"\b(?:товар\w*|ассортимент\w*|прода[её]те|в\s+продаже)\b", text)
         )
         unknown_order_item = bool(

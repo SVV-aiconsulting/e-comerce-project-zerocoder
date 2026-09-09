@@ -109,7 +109,7 @@ class Command(BaseCommand):
                 "delivery_length_cm": 20,
                 "delivery_width_cm": 15,
                 "delivery_height_cm": 5,
-                "aliases": ["гребешок", "морской гребешок"],
+                "aliases": ["гребешок", "морской гребешок", "моллюски", "молюски", "малюски"],
             },
             {
                 "public_code": "DEMO-MUSSELS",
@@ -123,7 +123,7 @@ class Command(BaseCommand):
                 "delivery_length_cm": 30,
                 "delivery_width_cm": 20,
                 "delivery_height_cm": 10,
-                "aliases": ["мидии", "мидия"],
+                "aliases": ["мидии", "мидия", "моллюски", "молюски", "малюски"],
             },
             {
                 "public_code": "DEMO-SQUID",
@@ -137,7 +137,7 @@ class Command(BaseCommand):
                 "delivery_length_cm": 25,
                 "delivery_width_cm": 18,
                 "delivery_height_cm": 6,
-                "aliases": ["кальмар", "кальмары"],
+                "aliases": ["кальмар", "кальмары", "моллюски", "молюски", "малюски"],
             },
             {
                 "public_code": "DEMO-TROUT",
@@ -207,7 +207,7 @@ class Command(BaseCommand):
                 "delivery_length_cm": 25,
                 "delivery_width_cm": 18,
                 "delivery_height_cm": 6,
-                "aliases": ["осьминог", "осьминоги"],
+                "aliases": ["осьминог", "осьминоги", "моллюски", "молюски", "малюски"],
             },
             {
                 "public_code": "DEMO-TUNA",

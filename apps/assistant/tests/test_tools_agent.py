@@ -589,7 +589,7 @@ def test_semantic_recommendation_returns_only_validated_catalog_cards(
         external_user_id="semantic-molluscs-user",
         conversation_key="semantic-molluscs-dialog",
         customer=customer,
-        raw_text="Что у вас есть из моллюсков?",
+        raw_text="Что подойдёт для быстрого приготовления?",
     ).event
 
     InboundEventProcessor.process(event.pk)
@@ -607,6 +607,40 @@ def test_semantic_recommendation_returns_only_validated_catalog_cards(
     ]
     assert "set_cart_item" in {
         definition["name"] for definition in provider.calls[1]["functions"]
+    }
+
+
+@pytest.mark.django_db
+def test_misspelled_mollusc_category_returns_every_managed_catalog_match(
+    customer, settings
+):
+    settings.AI_CONSULTANT_ENABLED = True
+    call_command("load_demo_data")
+    event = InboundEventService.register(
+        channel=Channel.TELEGRAM,
+        external_event_id="managed-molluscs",
+        external_user_id="managed-molluscs-user",
+        conversation_key="managed-molluscs-dialog",
+        customer=customer,
+        raw_text="Что у вас есть из малюсков?",
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=customer,
+    )
+    turn = AssistantTurn.objects.create(event=event, draft=draft)
+    backend = AssistantToolExecutor(event=event, draft=draft, turn=turn)
+
+    action = backend.catalog_action()
+    assert action == ("search_products", {"query": "малюски", "limit": 30})
+    result = backend.execute(*action, call_index=1)
+    assert {row["code"] for row in result["products"]} == {
+        "DEMO-SCALLOP",
+        "DEMO-MUSSELS",
+        "DEMO-SQUID",
+        "DEMO-OCTOPUS",
     }
 
 
