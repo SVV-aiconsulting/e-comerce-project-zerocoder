@@ -71,6 +71,12 @@ def _admin_url(model_name: str, pk: int) -> str:
     return reverse(f"admin:{model_name}_change", args=[pk])
 
 
+def _assistant_url(draft_id: int | None = None) -> str:
+    if draft_id:
+        return _admin_url("intake_orderdraft", draft_id)
+    return reverse("admin:intake_orderdraft_changelist")
+
+
 def _attention_items() -> list[AttentionItem]:
     items: list[AttentionItem] = []
 
@@ -86,7 +92,7 @@ def _attention_items() -> list[AttentionItem]:
                 _admin_url("intake_orderdraft", draft.pk),
             )
         )
-    for event in InboundEvent.objects.filter(status=InboundEventStatus.FAILED).order_by(
+    for event in InboundEvent.objects.filter(status=InboundEventStatus.FAILED).select_related("draft").order_by(
         "-updated_at"
     )[:20]:
         items.append(
@@ -95,7 +101,7 @@ def _attention_items() -> list[AttentionItem]:
                 f"{event.get_channel_display()}: {event.external_event_id}",
                 event.last_error or "Событие не обработано",
                 event.updated_at,
-                _admin_url("intake_inboundevent", event.pk),
+                _assistant_url(event.draft_id),
             )
         )
     for clarification in Clarification.objects.filter(
@@ -107,7 +113,7 @@ def _attention_items() -> list[AttentionItem]:
                 f"Черновик {clarification.draft.public_id}",
                 clarification.question,
                 clarification.asked_at,
-                _admin_url("intake_clarification", clarification.pk),
+                _assistant_url(clarification.draft_id),
             )
         )
     for conflict in CustomerIdentityConflict.objects.filter(
@@ -279,7 +285,11 @@ def manager_dashboard(request: HttpRequest) -> HttpResponse:
     for pulse in heartbeats:
         pulse.stale = pulse.last_seen_at < timezone.now() - timedelta(seconds=120)
     oldest = InboundEvent.objects.filter(status__in=["received", "queued", "processing", "retry_scheduled"]).order_by("created_at").first()
+    from django.contrib import admin
+
     context = {
+        **admin.site.each_context(request),
+        "title": "Статистика и аналитика",
         "heartbeats": heartbeats,
         "oldest_pending": oldest.created_at if oldest else None,
         "period_start": start,

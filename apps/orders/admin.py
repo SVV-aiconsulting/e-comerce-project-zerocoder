@@ -43,7 +43,6 @@ class OrderAdmin(admin.ModelAdmin):
         "customer_name_snapshot",
         "customer_phone_snapshot",
         "customer_email_snapshot",
-        "customer_deleted",
         "order_status",
         "payment_status",
         "channel",

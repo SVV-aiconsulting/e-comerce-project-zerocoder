@@ -1,0 +1,33 @@
+{% extends "admin/change_form.html" %}
+
+{% block after_related_objects %}
+{{ block.super }}
+<section class="module aligned ai-conversation">
+  <h2>История диалога</h2>
+  <div class="ai-conversation__timeline">
+    {% for message in conversation_messages %}
+      <article class="ai-message ai-message--{{ message.role }}">
+        <div class="ai-message__meta">
+          <strong>{{ message.get_role_display }}</strong>
+          <time>{{ message.created_at|date:"d.m.Y H:i:s" }}</time>
+        </div>
+        <div class="ai-message__content">{{ message.content|linebreaksbr }}</div>
+        {% if message.action_url %}<div class="ai-message__action"><a href="{{ message.action_url }}" target="_blank" rel="noopener">Открыть ссылку из ответа</a></div>{% endif %}
+      </article>
+    {% empty %}
+      <p class="help">Для этого черновика сохранённых сообщений пока нет.</p>
+    {% endfor %}
+  </div>
+</section>
+<style>
+  .ai-conversation { margin-top: 20px; }
+  .ai-conversation__timeline { display: flex; flex-direction: column; gap: 12px; padding: 18px; }
+  .ai-message { width: min(760px, 82%); box-sizing: border-box; padding: 12px 14px; border: 1px solid var(--hairline-color); border-radius: 12px; background: var(--darkened-bg); }
+  .ai-message--user { align-self: flex-start; border-left: 4px solid #417690; }
+  .ai-message--assistant { align-self: flex-end; border-right: 4px solid #ba2121; background: var(--body-bg); }
+  .ai-message__meta { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 8px; color: var(--body-quiet-color); }
+  .ai-message__content { white-space: normal; overflow-wrap: anywhere; line-height: 1.45; }
+  .ai-message__action { margin-top: 8px; }
+  @media (max-width: 767px) { .ai-message { width: 100%; } }
+</style>
+{% endblock %}

@@ -20,6 +20,22 @@ def test_dashboard_requires_staff_user():
 
 
 @pytest.mark.django_db
+def test_dashboard_is_available_from_django_admin():
+    user = User.objects.create_superuser(
+        username="admin-dashboard", email="admin@example.com", password="secret"
+    )
+    client = Client()
+    client.force_login(user)
+
+    response = client.get("/admin/dashboard/analyticsdashboard/")
+
+    assert response.status_code == 200
+    content = response.content.decode()
+    assert "Статистика и аналитика" in content
+    assert "/admin/dashboard/analyticsdashboard/" in client.get("/admin/").content.decode()
+
+
+@pytest.mark.django_db
 def test_dashboard_shows_metrics_channel_and_attention(
     active_cart, product, customer, delivery_rule
 ):

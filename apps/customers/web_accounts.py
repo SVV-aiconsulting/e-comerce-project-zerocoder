@@ -15,8 +15,10 @@ from django.http import JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
 from django.views import View
+from apps.common.enums import CustomerSource
 from apps.customers.models import (WebAccount, WebSessionBinding, OrderAccessGrant,
     HistoryLinkRequest, LoginCode, AuthGuard, Customer, CustomerIdentityConflict)
+from apps.customers.services import CustomerService
 from apps.customers.validators import normalize_email, normalize_phone
 from apps.orders.models import Order
 from apps.orders.access import OrderAccessService
@@ -50,6 +52,39 @@ def send_login_code(email, code):
             password=settings.YANDEX_EMAIL_APP_PASSWORD, use_ssl=True, timeout=10)
     EmailMessage("Код входа WebMarket", f"Ваш код: {code}. Он действует 10 минут. Не сообщайте его другим.",
         settings.YANDEX_EMAIL_ADDRESS or settings.DEFAULT_FROM_EMAIL, [email], connection=connection).send(fail_silently=False)
+
+
+def ensure_customer_card(account):
+    """Create the CRM card only after ownership of the account email is proven."""
+    if account.customer_id:
+        customer = Customer.objects.select_for_update().get(pk=account.customer_id)
+        changed = []
+        if customer.email != account.email:
+            customer.email = account.email
+            changed.append("email")
+        if account.name and customer.name != account.name:
+            customer.name = account.name
+            changed.append("name")
+        if account.phone_login and customer.phone != account.phone_login:
+            customer.phone = account.phone_login
+            changed.append("phone")
+        if customer.email_verified_at is None:
+            customer.email_verified_at = timezone.now()
+            changed.append("email_verified_at")
+        if changed:
+            customer.save(update_fields=[*changed, "updated_at"])
+        return customer
+
+    customer = CustomerService.create_customer(
+        name=account.name or "Клиент сайта",
+        phone=account.phone_login or "",
+        email=account.email,
+        first_source=CustomerSource.WEBSITE,
+        email_verified=True,
+    )
+    account.customer = customer
+    account.save(update_fields=["customer", "updated_at"])
+    return customer
 
 
 @transaction.atomic
@@ -185,6 +220,8 @@ class CodeVerifyView(View):
                         elif account.verified_at is None:
                             account.verified_at = timezone.now()
                             account.save(update_fields=["verified_at"])
+                    if account is not None:
+                        ensure_customer_card(account)
                 row.save(update_fields=["attempts", "consumed_at"])
         if account is None:
             return JsonResponse({"error": {"message": "Код неверен или истёк. Запросите новый."}}, status=400)
@@ -266,6 +303,7 @@ class AccountView(View):
                 account.name = str(payload["name"]).strip()[:255]
             with transaction.atomic():
                 account.save(update_fields=["phone_login", "name"])
+                ensure_customer_card(account)
         except (ValidationError, IntegrityError):
             return JsonResponse({"error": {"message": "Этот телефон недоступен как логин или введён неверно."}}, status=400)
         if payload.get("cart_choice") in ("guest", "account"):

@@ -138,8 +138,8 @@ class OrderDraft(TimeStampedModel):
     )
 
     class Meta:
-        verbose_name = "Черновик AI-заказа"
-        verbose_name_plural = "Черновики AI-заказов"
+        verbose_name = "Диалог AI-ассистента"
+        verbose_name_plural = "Диалоги и заказы"
         ordering = ["-created_at"]
         constraints = [
             models.UniqueConstraint(

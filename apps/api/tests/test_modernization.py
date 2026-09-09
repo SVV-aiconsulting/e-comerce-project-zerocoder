@@ -13,7 +13,7 @@ from apps.carts.checkout import CheckoutService
 from apps.carts.models import Cart, CheckoutPreview
 from apps.carts.services import CartService
 from apps.common.exceptions import PreviewStaleError, IntakeRateLimited
-from apps.customers.models import WebAccount, OrderAccessGrant, HistoryLinkRequest, LoginCode
+from apps.customers.models import Customer, WebAccount, OrderAccessGrant, HistoryLinkRequest, LoginCode
 from apps.customers.services import CustomerService
 from apps.intake.cart_bridge import UnifiedCartBridge
 from apps.intake.draft_application import DraftExtractionApplier
@@ -22,6 +22,7 @@ from apps.intake.services import OrderDraftService, InboundEventService
 from apps.intake.tests.test_fulfillment import extraction
 from apps.intake.tasks import dispatch_pending_events
 from apps.orders.access import OrderAccessService
+from apps.orders.models import Order
 from apps.orders.services import OrderService
 from apps.payments.services import PaymentService
 from apps.payments.models import Payment, PaymentState, RefundState
@@ -118,6 +119,13 @@ def test_code_registration_and_reuse_rejected(client, settings):
     assert verify(client, challenge, code).status_code == 200
     account = WebAccount.objects.get()
     assert not account.user.is_staff and not account.user.has_usable_password()
+    assert account.customer_id is not None
+    assert Customer.objects.filter(
+        pk=account.customer_id,
+        email="buyer@example.com",
+        email_verified_at__isnull=False,
+    ).exists()
+    assert not Order.objects.exists()
     assert client.get("/store/account/").json()["authenticated"]
     assert verify(client, challenge, code).status_code == 400
 
