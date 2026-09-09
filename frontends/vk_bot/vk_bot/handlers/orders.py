@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from vk_bot.api.errors import ApiError, BackendUnavailableError
 from vk_bot.services.formatting import format_order_detail, format_orders_list_item
-from vk_bot.handlers.common import answer_api_error, ensure_identified
+from vk_bot.handlers.common import answer_api_error, ensure_identified, is_consent_blocked
 from vk_bot.services.error_messages import NOT_IDENTIFIED_MESSAGE
 from vk_bot.keyboards import orders_list_keyboard
 from vk_bot.texts import EMPTY_ORDERS
@@ -12,11 +12,15 @@ from vk_bot.utils import channel, get_session, send_message
 
 async def show_orders_list(api, peer_id: int, user_id: int, storefront_api) -> None:
     try:
-        session = await ensure_identified(storefront_api, user_id)
+        session = await ensure_identified(
+            storefront_api, user_id, ctx_api=api, peer_id=peer_id
+        )
     except (ApiError, BackendUnavailableError) as exc:
         await answer_api_error(api, peer_id, exc)
         return
 
+    if is_consent_blocked(session):
+        return
     if session is None:
         await send_message(api, peer_id, NOT_IDENTIFIED_MESSAGE)
         return

@@ -1,13 +1,14 @@
 """Команда старта и первичная идентификация."""
 from __future__ import annotations
 
+import json
 import logging
 
 from vkbottle.bot import Message
 from vkbottle.dispatch.rules.base import CommandRule, FuncRule
 
 from vk_bot.api.errors import ApiError, BackendUnavailableError
-from vk_bot.handlers.common import answer_api_error, identify_without_phone
+from vk_bot.handlers.common import answer_api_error, identify_without_phone, send_consent_prompt
 from vk_bot.handlers.registration import prompt_registration
 from vk_bot.keyboards import main_menu_keyboard, personal_data_consent_keyboard
 from vk_bot.services.session import apply_identify_response, is_identified
@@ -19,10 +20,23 @@ logger = logging.getLogger(__name__)
 START_TEXTS = {"/start", "начать", "start", "Начать"}
 
 
+def _message_payload(message: Message) -> dict:
+    raw = getattr(message, "payload", None) or ""
+    if isinstance(raw, dict):
+        return raw
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
 def is_start_message(message: Message) -> bool:
     text = (message.text or "").strip()
-    lowered = text.lower()
-    return lowered in {t.lower() for t in START_TEXTS}
+    if text.lower() in {t.lower() for t in START_TEXTS}:
+        return True
+    payload = _message_payload(message)
+    return payload.get("command") == "start" or payload.get("cmd") == "start"
 
 
 async def handle_start(message: Message, api_holder: dict) -> None:
@@ -37,12 +51,7 @@ async def handle_start(message: Message, api_holder: dict) -> None:
         await answer_api_error(message.ctx_api, peer_id, exc)
         return
     if not consent.get("granted"):
-        await send_message(
-            message.ctx_api, peer_id,
-            "Для регистрации и оформления заказа требуется отдельное согласие на обработку персональных данных.\n\n"
-            f"Политика: {consent['policy_url']}\nСогласие: {consent['consent_url']}",
-            personal_data_consent_keyboard(),
-        )
+        await send_consent_prompt(message.ctx_api, peer_id, consent)
         return
 
     session = get_session(str(user_id))
@@ -54,6 +63,10 @@ async def handle_start(message: Message, api_holder: dict) -> None:
         response = await identify_without_phone(api, user_id)
     except (ApiError, BackendUnavailableError) as exc:
         await answer_api_error(message.ctx_api, peer_id, exc)
+        return
+
+    if response.get("status") == "consent_required":
+        await send_consent_prompt(message.ctx_api, peer_id, consent)
         return
 
     if response.get("status") == "identified":
@@ -99,12 +112,30 @@ def register_start_handlers(bot, api_holder: dict) -> None:
         if action not in {"granted", "declined"}:
             await answer_callback(event, snackbar="Некорректное действие")
             return
-        await api_holder["api"].record_personal_data_consent(
-            channel="vk", external_user_id=str(event.user_id),
-            action=action, source="vk_bot_button",
-        )
-        text = "Согласие сохранено. Напишите «Начать» для продолжения." if action == "granted" else "Без обработки необходимых данных регистрация и оформление заказа недоступны."
-        await send_message(event.ctx_api, event.peer_id, text)
+        try:
+            await api_holder["api"].record_personal_data_consent(
+                channel="vk", external_user_id=str(event.user_id),
+                action=action, source="vk_bot_button",
+            )
+        except (ApiError, BackendUnavailableError) as exc:
+            await answer_api_error(event.ctx_api, event.peer_id, exc)
+            await answer_callback(event)
+            return
+        if action == "granted":
+            await send_message(event.ctx_api, event.peer_id, "Согласие сохранено.")
+            fake_message = type("StartMessage", (), {
+                "from_id": event.user_id,
+                "peer_id": event.peer_id,
+                "ctx_api": event.ctx_api,
+                "text": "Начать",
+            })()
+            await handle_start(fake_message, api_holder)
+        else:
+            await send_message(
+                event.ctx_api,
+                event.peer_id,
+                "Без обработки необходимых данных регистрация и оформление заказа недоступны.",
+            )
         await answer_callback(event)
 
     @bot.on.message(CommandRule("privacy_withdraw"))

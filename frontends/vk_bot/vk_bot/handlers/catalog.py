@@ -78,7 +78,7 @@ def register_catalog_handlers(bot, api_holder: dict) -> None:
 
 
 async def _adjust_product_qty(event, api_holder: dict, *, delta: Decimal) -> None:
-    from vk_bot.handlers.common import answer_api_error, ensure_identified
+    from vk_bot.handlers.common import answer_api_error, ensure_identified, is_consent_blocked
     from vk_bot.services.error_messages import NOT_IDENTIFIED_MESSAGE
     from vk_bot.api.errors import ApiError, BackendUnavailableError
 
@@ -86,12 +86,17 @@ async def _adjust_product_qty(event, api_holder: dict, *, delta: Decimal) -> Non
     settings = api_holder["settings"]
 
     try:
-        session = await ensure_identified(storefront_api, event.user_id)
+        session = await ensure_identified(
+            storefront_api, event.user_id, ctx_api=event.ctx_api, peer_id=event.peer_id
+        )
     except (ApiError, BackendUnavailableError) as exc:
         await answer_api_error(event.ctx_api, event.peer_id, exc)
         await answer_callback(event)
         return
 
+    if is_consent_blocked(session):
+        await answer_callback(event)
+        return
     if session is None:
         await send_message(event.ctx_api, event.peer_id, NOT_IDENTIFIED_MESSAGE)
         await answer_callback(event)
@@ -144,7 +149,7 @@ async def _adjust_product_qty(event, api_holder: dict, *, delta: Decimal) -> Non
 
 
 async def _add_product_to_cart(event, storefront_api) -> None:
-    from vk_bot.handlers.common import answer_api_error, ensure_identified
+    from vk_bot.handlers.common import answer_api_error, ensure_identified, is_consent_blocked
     from vk_bot.services.error_messages import NOT_IDENTIFIED_MESSAGE
     from vk_bot.api.errors import ApiError, BackendUnavailableError
     from vk_bot.services.formatting import format_price
@@ -152,12 +157,17 @@ async def _add_product_to_cart(event, storefront_api) -> None:
     from vk_bot.utils import channel
 
     try:
-        session = await ensure_identified(storefront_api, event.user_id)
+        session = await ensure_identified(
+            storefront_api, event.user_id, ctx_api=event.ctx_api, peer_id=event.peer_id
+        )
     except (ApiError, BackendUnavailableError) as exc:
         await answer_api_error(event.ctx_api, event.peer_id, exc)
         await answer_callback(event)
         return
 
+    if is_consent_blocked(session):
+        await answer_callback(event)
+        return
     if session is None:
         await send_message(event.ctx_api, event.peer_id, NOT_IDENTIFIED_MESSAGE)
         await answer_callback(event)

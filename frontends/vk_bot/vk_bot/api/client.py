@@ -115,6 +115,14 @@ class StorefrontApiClient:
         if response.status_code == 409:
             return self._parse_json_response(response)
 
+        if response.status_code == 403:
+            payload = self._parse_json_response(response)
+            if payload.get("status") == "consent_required" or payload.get(
+                "next_action"
+            ) == "request_personal_data_consent":
+                return payload
+            self._raise_api_error(response)
+
         if response.status_code >= 400:
             self._raise_api_error(response)
 

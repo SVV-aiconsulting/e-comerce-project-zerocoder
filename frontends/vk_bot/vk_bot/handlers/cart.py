@@ -4,7 +4,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from vk_bot.api.errors import ApiError, BackendUnavailableError
-from vk_bot.handlers.common import answer_api_error, ensure_identified
+from vk_bot.handlers.common import answer_api_error, ensure_identified, is_consent_blocked
 from vk_bot.services.error_messages import NOT_IDENTIFIED_MESSAGE
 from vk_bot.services.formatting import format_cart_footer, format_cart_item_line, format_quantity
 from vk_bot.keyboards import cart_footer_keyboard, cart_item_keyboard
@@ -21,11 +21,15 @@ from vk_bot.utils import (
 
 async def show_cart(api, peer_id: int, user_id: int, storefront_api) -> None:
     try:
-        session = await ensure_identified(storefront_api, user_id)
+        session = await ensure_identified(
+            storefront_api, user_id, ctx_api=api, peer_id=peer_id
+        )
     except (ApiError, BackendUnavailableError) as exc:
         await answer_api_error(api, peer_id, exc)
         return
 
+    if is_consent_blocked(session):
+        return
     if session is None:
         await send_message(api, peer_id, NOT_IDENTIFIED_MESSAGE)
         return
@@ -99,12 +103,17 @@ async def _update_cart_footer(api, peer_id: int, session: dict, cart: dict) -> N
 
 async def _apply_cart_quantity_change(event, storefront_api, *, product_id: int, delta: Decimal) -> None:
     try:
-        session = await ensure_identified(storefront_api, event.user_id)
+        session = await ensure_identified(
+            storefront_api, event.user_id, ctx_api=event.ctx_api, peer_id=event.peer_id
+        )
     except (ApiError, BackendUnavailableError) as exc:
         await answer_api_error(event.ctx_api, event.peer_id, exc)
         await _answer_event(event)
         return
 
+    if is_consent_blocked(session):
+        await _answer_event(event)
+        return
     if session is None:
         await send_message(event.ctx_api, event.peer_id, NOT_IDENTIFIED_MESSAGE)
         await _answer_event(event)
@@ -193,12 +202,17 @@ def register_cart_handlers(bot, api_holder: dict) -> None:
     @bot.on.raw_event(GroupEventType.MESSAGE_EVENT, MessageEvent, cmd_payload("cart_clear"))
     async def cart_clear_event(event: MessageEvent):
         try:
-            session = await ensure_identified(api_holder["api"], event.user_id)
+            session = await ensure_identified(
+                api_holder["api"], event.user_id, ctx_api=event.ctx_api, peer_id=event.peer_id
+            )
         except (ApiError, BackendUnavailableError) as exc:
             await answer_api_error(event.ctx_api, event.peer_id, exc)
             await _answer_event(event)
             return
 
+        if is_consent_blocked(session):
+            await _answer_event(event)
+            return
         if session is None:
             await send_message(event.ctx_api, event.peer_id, NOT_IDENTIFIED_MESSAGE)
             await _answer_event(event)
@@ -236,12 +250,17 @@ def register_cart_handlers(bot, api_holder: dict) -> None:
         payload = parse_event_payload(event) or {}
         product_id = int(payload.get("id", 0))
         try:
-            session = await ensure_identified(api_holder["api"], event.user_id)
+            session = await ensure_identified(
+                api_holder["api"], event.user_id, ctx_api=event.ctx_api, peer_id=event.peer_id
+            )
         except (ApiError, BackendUnavailableError) as exc:
             await answer_api_error(event.ctx_api, event.peer_id, exc)
             await _answer_event(event)
             return
 
+        if is_consent_blocked(session):
+            await _answer_event(event)
+            return
         if session is None:
             await send_message(event.ctx_api, event.peer_id, NOT_IDENTIFIED_MESSAGE)
             await _answer_event(event)

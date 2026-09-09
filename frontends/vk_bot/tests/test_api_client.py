@@ -91,7 +91,20 @@ async def test_submit_and_read_inbound_event(client, respx_mock):
 
 
 @pytest.mark.asyncio
-async def test_identify_phone_validation_error(client, respx_mock):
+async def test_identify_consent_required_is_not_api_error(client, respx_mock):
+    respx_mock.post(f"{BASE_URL}/api/identify-customer/").respond(
+        status_code=403,
+        json={
+            "status": "consent_required",
+            "registration_required": False,
+            "next_action": "request_personal_data_consent",
+            "channel": "vk",
+            "external_user_id": "123",
+        },
+    )
+    result = await client.identify_customer({"channel": "vk", "external_user_id": "123"})
+    assert result["status"] == "consent_required"
+    assert result["next_action"] == "request_personal_data_consent"
     respx_mock.post(f"{BASE_URL}/api/identify-customer/").respond(
         status_code=400,
         json={

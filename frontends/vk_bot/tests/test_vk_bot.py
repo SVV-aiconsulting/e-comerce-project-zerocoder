@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from vk_bot.api.errors import ApiError, BackendUnavailableError
@@ -17,6 +19,16 @@ def test_error_formatting_invalid_phone():
     )
     msg = user_message_for_error(exc)
     assert "79991234567" in msg
+
+
+def test_is_start_message_matches_text_and_vk_command_payload():
+    from vk_bot.handlers.start import is_start_message
+
+    assert is_start_message(SimpleNamespace(text="Начать", payload="")) is True
+    assert is_start_message(SimpleNamespace(text="привет", payload="")) is False
+    assert is_start_message(
+        SimpleNamespace(text="", payload='{"command":"start"}')
+    ) is True
 
 
 def test_vk_handlers_do_not_import_django():

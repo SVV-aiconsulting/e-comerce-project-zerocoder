@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from vk_bot.api.errors import ApiError, BackendUnavailableError
-from vk_bot.handlers.common import answer_api_error, ensure_identified
+from vk_bot.handlers.common import answer_api_error, ensure_identified, is_consent_blocked
 from vk_bot.handlers.registration import prompt_registration
 from vk_bot.utils import channel, send_message
 
@@ -14,7 +14,11 @@ async def handle_natural_order_message(message, api_holder: dict) -> None:
     external_user_id = str(message.from_id)
 
     try:
-        session = await ensure_identified(api, message.from_id)
+        session = await ensure_identified(
+            api, message.from_id, ctx_api=message.ctx_api, peer_id=message.peer_id
+        )
+        if is_consent_blocked(session):
+            return
         if session is None:
             await prompt_registration(message, bot)
             return

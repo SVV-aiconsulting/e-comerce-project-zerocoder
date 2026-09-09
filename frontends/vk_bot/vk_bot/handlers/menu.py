@@ -8,7 +8,7 @@ from vk_bot.api.errors import ApiError, BackendUnavailableError
 from vk_bot.constants import MENU_CART, MENU_CATALOG, MENU_HELP, MENU_ORDERS
 from vk_bot.handlers.cart import show_cart
 from vk_bot.handlers.catalog import show_catalog
-from vk_bot.handlers.common import answer_api_error, ensure_identified
+from vk_bot.handlers.common import answer_api_error, ensure_identified, is_consent_blocked
 from vk_bot.services.error_messages import NOT_IDENTIFIED_MESSAGE
 from vk_bot.handlers.orders import show_orders_list
 from vk_bot.keyboards import main_menu_keyboard
@@ -21,11 +21,15 @@ async def _handle_menu_action(message: Message, api_holder: dict, action: str) -
     peer_id = message.peer_id
     api = api_holder["api"]
     try:
-        session = await ensure_identified(api, user_id)
+        session = await ensure_identified(
+            api, user_id, ctx_api=message.ctx_api, peer_id=peer_id
+        )
     except (ApiError, BackendUnavailableError) as exc:
         await answer_api_error(message.ctx_api, peer_id, exc)
         return
 
+    if is_consent_blocked(session):
+        return
     if session is None:
         await send_message(message.ctx_api, peer_id, NOT_IDENTIFIED_MESSAGE)
         return
