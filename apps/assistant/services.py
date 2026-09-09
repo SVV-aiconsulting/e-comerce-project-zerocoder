@@ -10,6 +10,7 @@ from django.utils import timezone
 from apps.assistant.prompts import ASSISTANT_TOOLS_SYSTEM_PROMPT
 from apps.assistant.runtime import get_assistant_runtime
 from apps.assistant.tools import AssistantToolExecutor
+from apps.common.enums import PaymentMethod
 from apps.intake.ai.providers.gigachat import get_gigachat_provider
 from apps.intake.enums import AssistantMessageRole, AssistantTurnStatus, OrderDraftStatus
 from apps.intake.exceptions import LLMProviderError
@@ -202,6 +203,28 @@ class OrderAssistantService:
                         output_tokens,
                     )
                     return OrderDraft.objects.get(pk=draft.pk)
+            if (
+                event.channel == "website"
+                and event.raw_payload.get("contact_name")
+                and not event.raw_payload.get("contact_phone")
+                and event.customer_id is None
+                and "customer" in (draft.missing_fields or [])
+            ):
+                cls._save_response(
+                    event,
+                    "Спасибо, имя записал. Теперь укажите контактный телефон в формате 9XXXXXXXXX.",
+                    response_type="contact_requested",
+                )
+                cls._finish_turn(
+                    turn,
+                    AssistantTurnStatus.SUCCEEDED,
+                    started,
+                    model_calls,
+                    tool_calls,
+                    input_tokens,
+                    output_tokens,
+                )
+                return OrderDraft.objects.get(pk=draft.pk)
             cart_actions = backend.cart_mutation_actions()
             if cart_actions:
                 result = None
@@ -656,7 +679,15 @@ class OrderAssistantService:
         elif result.get("receiving_type") == "pickup":
             lines.append("Получение: самовывоз")
         if result.get("payment_method"):
-            lines.append(f"Способ оплаты: {result['payment_method']}")
+            payment_labels = {
+                PaymentMethod.CASH_ON_DELIVERY: "наличными при получении",
+                PaymentMethod.CARD_ON_DELIVERY: "картой при получении",
+                PaymentMethod.CARD_PREPAYMENT: "картой онлайн",
+            }
+            lines.append(
+                "Способ оплаты: "
+                f"{payment_labels.get(result['payment_method'], result['payment_method'])}"
+            )
         if result.get("total_amount") is not None:
             lines.append(f"Итого последнего расчёта: {OrderAssistantService._money(result['total_amount'])} ₽")
         missing = result.get("missing_fields") or []
@@ -748,13 +779,17 @@ class OrderAssistantService:
                 lines.append(f"Ориентировочный срок: {preview['delivery_days']} дн.")
         else:
             lines.append("Получение: самовывоз")
-        lines.extend(
-            [
-                f"Итого: {OrderAssistantService._money(preview.get('total_amount'))} ₽",
-                "",
-                "Если состав, адрес, стоимость и срок доставки вас устраивают, подтвердите заказ одним сообщением.",
-            ]
-        )
+        lines.extend([f"Итого: {OrderAssistantService._money(preview.get('total_amount'))} ₽", ""])
+        if result.get("receiving_type") == "delivery":
+            lines.append(
+                "Если состав, адрес, стоимость и срок доставки вас устраивают, "
+                "подтвердите заказ одним сообщением."
+            )
+        else:
+            lines.append(
+                "Если состав и итоговая сумма вас устраивают, подтвердите заказ "
+                "одним сообщением."
+            )
         return "\n".join(lines)
 
     @staticmethod

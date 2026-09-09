@@ -458,6 +458,44 @@ def test_consultant_adds_each_explicit_product_quantity_without_model_guess(
 
 
 @pytest.mark.django_db
+def test_website_name_step_naturally_requests_phone(customer, settings, monkeypatch):
+    settings.AI_ASSISTANT_ENABLED = True
+    settings.AI_CONSULTANT_ENABLED = True
+    provider = ScriptedProvider([])
+    monkeypatch.setattr(
+        "apps.assistant.services.get_gigachat_provider", lambda: provider
+    )
+    event = InboundEventService.register(
+        channel=Channel.WEBSITE,
+        external_event_id="website-name-step",
+        external_user_id="website-name-user",
+        conversation_key="website-name-dialog",
+        customer=None,
+        raw_text="Меня зовут Алексей",
+        raw_payload={"contact_name": "Алексей", "contact_phone": ""},
+    ).event
+    draft, _ = OrderDraftService.get_or_create_active(
+        channel=event.channel,
+        external_user_id=event.external_user_id,
+        conversation_key=event.conversation_key,
+        customer=None,
+    )
+    draft.status = OrderDraftStatus.NEEDS_CLARIFICATION
+    draft.missing_fields = ["customer"]
+    draft.save(update_fields=["status", "missing_fields", "updated_at"])
+
+    InboundEventProcessor.process(event.pk)
+    event.status = InboundEventStatus.PROCESSED
+    event.save(update_fields=["status", "updated_at"])
+    event.refresh_from_db()
+    response = InboundEventResponseService.present(event)["response"]["message"]
+
+    assert "имя записал" in response
+    assert "телефон" in response
+    assert provider.calls == []
+
+
+@pytest.mark.django_db
 def test_assistant_resumes_manual_cart_checkout(customer, product, settings, monkeypatch):
     settings.AI_ASSISTANT_ENABLED = True
     cart = CartService.get_or_create_active_cart(

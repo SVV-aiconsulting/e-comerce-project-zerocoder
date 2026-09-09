@@ -548,6 +548,7 @@ class WebsiteAssistantMessageView(WebsiteApiView):
             raw_text=message,
             raw_payload={
                 "source": "website_ai_assistant",
+                "contact_name": name,
                 "contact_phone": phone,
                 "contact_email": email,
             },

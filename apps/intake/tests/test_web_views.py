@@ -138,6 +138,8 @@ def test_website_assistant_collects_name_and_phone_in_separate_messages(
 
     assert name_response.status_code == 202
     assert phone_response.status_code == 202
+    name_event = InboundEvent.objects.get(public_id=name_response.json()["event_id"])
+    assert name_event.raw_payload["contact_name"] == "Алексей"
     event = InboundEvent.objects.select_related("customer").get(
         public_id=phone_response.json()["event_id"]
     )
