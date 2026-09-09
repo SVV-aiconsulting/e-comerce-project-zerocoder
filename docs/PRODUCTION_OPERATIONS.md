@@ -16,9 +16,9 @@
    VK настроен в production `.env`, отдельный Compose profile ему не требуется.
 4. Проверить `/api/health/`, `/api/ready/`, heartbeat каждой очереди, возраст самой
    старой заявки, ошибки ЮKassa/Яндекс и ручной guest checkout.
-5. Оставить `AI_CONSULTANT_ENABLED=False`, пока 40 сценариев из
-   `AI_DIALOGUE_ACCEPTANCE.md` не дадут не менее 95%, ноль нарушений доступа/сумм и
-   p95 не хуже baseline более чем на 20%.
+5. Перед формальной приёмкой записать результаты 40 сценариев из
+   `AI_DIALOGUE_ACCEPTANCE.md`: не менее 95%, ноль нарушений доступа/сумм и p95 не
+   хуже baseline более чем на 20%.
 6. После включения консультанта сохранить старый режим как оперативный feature-flag
    fallback. Серверные проверки доступа, preview, платежей и возвратов не отключаются.
 
@@ -31,18 +31,14 @@
 |----------|--------|
 | Feature demo (внутренняя демонстрация функций) | **Готов** |
 | Показ заказчику как рабочий стенд | **Да, можно** |
-| Production-эталон без оговорок | **Пока нет** — HTTPS + проверенный backup (финальный этап) |
+| Публичный учебный MVP | **Готов** — HTTPS, backup, readiness и sandbox-интеграции проверены |
 | CI/CD (Actions → GHCR → VPS) | Работает |
-| Схема контейнеров | `nginx`, `web`, `db`, `telegram_bot` — все `healthy`; `vk_bot` — опционально (profile `vk`) |
+| Схема контейнеров | `nginx`, `web`, `db`, Redis, Celery/beat, три worker, Telegram и VK запущены |
 
 **Закрыто в checkpoint (коммит `781d626` и последующие деплои):** restart policies, healthcheck, `DJANGO_DEBUG=False`, deploy preflight, pin образов по SHA, nginx security headers, runbook backup/rollback.
 
-**Отложено на финальный этап hardening (не блокирует демо заказчику):**
-
-- HTTPS (Let's Encrypt + secure cookies);
-- первый backup + проверка restore;
-- ротация прод-секретов;
-- мониторинг и алерты.
+**За границами учебного MVP:** production-ротация интеграционных секретов и внешний
+сервис мониторинга/оповещений. Встроенные readiness, heartbeat и диагностика работают.
 
 ## Политика VPS-репозитория
 
@@ -108,7 +104,9 @@ docker compose -f docker-compose.prod.yml ps
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 ```
 
-Все сервисы (`db`, `web`, `nginx`, `telegram_bot`) должны быть `Up` (желательно `healthy` для `db`, `web`, `nginx`). `vk_bot` — только если включён profile `vk`.
+Все сервисы (`db`, Redis, `web`, `nginx`, Celery/beat, worker-очереди,
+`telegram_bot`, `vk_bot`) должны быть `Up`; для сервисов с healthcheck ожидается
+`healthy`.
 
 ### Логи
 
