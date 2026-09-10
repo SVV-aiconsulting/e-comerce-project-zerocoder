@@ -11,6 +11,7 @@ from vk_bot.config import Settings
 from vk_bot.handlers.cart import register_cart_handlers
 from vk_bot.handlers.ai_orders import handle_natural_order_message
 from vk_bot.handlers.catalog import register_catalog_handlers
+from vk_bot.services.product_card import ProductPhotoAttachmentCache
 from vk_bot.handlers.checkout import register_checkout_handlers
 from vk_bot.handlers.menu import register_menu_handlers
 from vk_bot.handlers.orders import register_orders_handlers
@@ -50,6 +51,7 @@ def create_bot(settings: Settings, api_client: StorefrontApiClient) -> Bot:
         "bot": bot,
         "settings": settings,
         "photo_uploader": photo_uploader,
+        "photo_cache": ProductPhotoAttachmentCache(),
     }
 
     register_start_handlers(bot, api_holder)

@@ -1,12 +1,14 @@
 """Каталог товаров."""
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 
 from vk_bot.api.errors import ApiError, BackendUnavailableError
 from vk_bot.services.product_card import (
     get_product_quantity,
     send_product_card,
+    upload_product_photo,
     update_product_card_event,
 )
 from vk_bot.services.session import sync_catalog_quantities
@@ -36,7 +38,23 @@ async def show_catalog(api, peer_id: int, user_id: int, storefront_api, api_hold
 
     await send_message(api, peer_id, "Каталог")
 
-    for product in products:
+    # Two uploads concurrently reduce the first uncached catalog delivery time
+    # without creating a burst of VK API calls. Cards are still sent in catalog
+    # order, so the client sees a stable, readable sequence.
+    semaphore = asyncio.Semaphore(2)
+
+    async def prepare_attachment(product: dict) -> str | None:
+        async with semaphore:
+            return await upload_product_photo(
+                photo_uploader,
+                peer_id,
+                product.get("main_image_url") or "",
+                settings.product_media_base_url or settings.backend_api_base_url,
+                api_holder.get("photo_cache"),
+            )
+
+    attachment_tasks = [asyncio.create_task(prepare_attachment(product)) for product in products]
+    for product, attachment_task in zip(products, attachment_tasks, strict=True):
         quantity = get_product_quantity(session, product)
         await send_product_card(
             api,
@@ -47,6 +65,9 @@ async def show_catalog(api, peer_id: int, user_id: int, storefront_api, api_hold
                 settings.product_media_base_url or settings.backend_api_base_url
             ),
             photo_uploader=photo_uploader,
+            photo_cache=api_holder.get("photo_cache"),
+            attachment=await attachment_task,
+            attachment_prepared=True,
         )
 
 
@@ -132,6 +153,7 @@ async def _adjust_product_qty(event, api_holder: dict, *, delta: Decimal) -> Non
                     settings.product_media_base_url or settings.backend_api_base_url
                 ),
                 photo_uploader=api_holder.get("photo_uploader"),
+                photo_cache=api_holder.get("photo_cache"),
             )
         except Exception:
             await send_product_card(
@@ -143,6 +165,7 @@ async def _adjust_product_qty(event, api_holder: dict, *, delta: Decimal) -> Non
                     settings.product_media_base_url or settings.backend_api_base_url
                 ),
                 photo_uploader=api_holder.get("photo_uploader"),
+                photo_cache=api_holder.get("photo_cache"),
             )
 
     await answer_callback(event)

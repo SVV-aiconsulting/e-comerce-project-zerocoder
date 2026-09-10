@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from vk_bot.services.formatting import format_product_card
 from vk_bot.services.images import resolve_image_url
-from vk_bot.services.product_card import get_product_quantity
+from vk_bot.services.product_card import ProductPhotoAttachmentCache, get_product_quantity
 
 
 def test_resolve_image_url_rewrites_docker_host_to_internal_media_server():
@@ -38,6 +38,34 @@ def test_get_product_quantity_uses_session_or_minimum():
 
     session = {"product_quantities": {}}
     assert get_product_quantity(session, product) == Decimal("10")
+
+
+async def test_product_photo_cache_reuses_attachment_for_same_image():
+    cache = ProductPhotoAttachmentCache()
+    calls = 0
+
+    async def upload():
+        nonlocal calls
+        calls += 1
+        return "photo-1_2"
+
+    assert await cache.get_or_create("https://images.example/product.jpg", upload) == "photo-1_2"
+    assert await cache.get_or_create("https://images.example/product.jpg", upload) == "photo-1_2"
+    assert calls == 1
+
+
+async def test_product_photo_cache_does_not_cache_failed_upload():
+    cache = ProductPhotoAttachmentCache()
+    calls = 0
+
+    async def upload():
+        nonlocal calls
+        calls += 1
+        return None
+
+    assert await cache.get_or_create("https://images.example/product.jpg", upload) is None
+    assert await cache.get_or_create("https://images.example/product.jpg", upload) is None
+    assert calls == 2
 
 
 def test_product_card_keyboard_has_three_buttons_in_first_row():
