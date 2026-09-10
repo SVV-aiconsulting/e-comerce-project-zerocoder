@@ -309,6 +309,8 @@ def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart,
     from apps.common.enums import Channel, PaymentMethod, ReceivingType
     from apps.orders.services import OrderService
     from apps.orders.models import Order
+    from apps.privacy.models import ConsentMethod, ConsentStatus, IdentityType, PersonalDataConsentEvent
+    from apps.privacy.services import ConsentService
 
     CartService.set_item_quantity(active_cart, product, Decimal("1"))
 
@@ -328,6 +330,19 @@ def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart,
         snapshot={"terms": {}, "items": [], "totals": {}},
         expires_at=timezone.now() + timedelta(minutes=15),
     )
+    ConsentService.record(
+        channel=Channel.TELEGRAM,
+        identity_type=IdentityType.TELEGRAM_USER_ID,
+        identity_value="12345",
+        source="telegram_bot_button",
+        status=ConsentStatus.GRANTED,
+        expression_method=ConsentMethod.BOT_BUTTON,
+        customer=customer,
+    )
+    assert ConsentService.has_current_consent(
+        channel=Channel.TELEGRAM,
+        identity_value="12345",
+    )
 
     CustomerService.anonymize_orders_and_delete(customer=customer)
 
@@ -341,3 +356,59 @@ def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart,
     assert order.items.exists()
     preview.refresh_from_db()
     assert preview.customer is None
+    assert not ConsentService.has_current_consent(
+        channel=Channel.TELEGRAM,
+        identity_value="12345",
+    )
+    withdrawal = PersonalDataConsentEvent.objects.filter(
+        channel=Channel.TELEGRAM,
+        identity_value="12345",
+    ).latest("occurred_at", "id")
+    assert withdrawal.status == ConsentStatus.WITHDRAWN
+    assert withdrawal.source == "customer_card_erased"
+    assert withdrawal.customer is None
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("channel", "identity_type", "external_user_id"),
+    [
+        (Channel.TELEGRAM, "telegram_user_id", "tg-erasure"),
+        (Channel.VK, "vk_user_id", "vk-erasure"),
+        (Channel.MAX, "max_user_id", "max-erasure"),
+        (Channel.WEBSITE, "website_session_id", "web-erasure"),
+    ],
+)
+def test_customer_erasure_revokes_consent_for_every_supported_channel(
+    db, channel, identity_type, external_user_id
+):
+    from apps.privacy.models import ConsentMethod, ConsentStatus, IdentityType
+    from apps.privacy.services import ConsentService
+
+    customer = CustomerService.create_customer(
+        name="Клиент на удаление",
+        email=f"{channel}@example.test",
+        first_source=CustomerSource.WEBSITE,
+    )
+    if channel != Channel.WEBSITE:
+        CustomerService.link_channel(
+            customer=customer,
+            channel=channel,
+            external_user_id=external_user_id,
+        )
+    ConsentService.record(
+        channel=channel,
+        identity_type=IdentityType(identity_type),
+        identity_value=external_user_id,
+        source="test",
+        status=ConsentStatus.GRANTED,
+        expression_method=ConsentMethod.BOT_BUTTON,
+        customer=customer,
+    )
+
+    CustomerService.anonymize_orders_and_delete(customer=customer)
+
+    assert not ConsentService.has_current_consent(
+        channel=channel,
+        identity_value=external_user_id,
+    )

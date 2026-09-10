@@ -47,6 +47,53 @@ class CustomerService:
         """
         from apps.orders.models import Order
         from apps.carts.models import CheckoutPreview
+        from apps.privacy.models import ConsentMethod, IdentityType, PersonalDataConsentEvent
+        from apps.privacy.services import ConsentService
+
+        # A platform account can keep talking to a bot after its CRM card has
+        # been erased. The consent registry is immutable, therefore we append
+        # a withdrawal event for every currently linked channel identity
+        # instead of deleting its audit trail. A subsequent /start then asks
+        # for a new explicit consent before registration or checkout.
+        identity_types = {
+            Channel.TELEGRAM: IdentityType.TELEGRAM_USER_ID,
+            Channel.VK: IdentityType.VK_USER_ID,
+            Channel.MAX: IdentityType.MAX_USER_ID,
+            Channel.WEBSITE: IdentityType.WEBSITE_SESSION_ID,
+        }
+        consent_identities = {
+            (identity.channel, identity.external_user_id): identity_types.get(identity.channel)
+            for identity in customer.channel_identities.all()
+        }
+        # A website customer is usually connected to a consent event through
+        # the browser session, not a CustomerChannelIdentity. Include every
+        # consent identity already associated with the card as well.
+        for event in PersonalDataConsentEvent.objects.filter(customer=customer):
+            consent_identities.setdefault(
+                (event.channel, event.identity_value), event.identity_type
+            )
+
+        for (channel, identity_value), identity_type in consent_identities.items():
+            if identity_type and ConsentService.has_current_consent(
+                channel=channel,
+                identity_value=identity_value,
+            ):
+                ConsentService.withdraw(
+                    channel=channel,
+                    identity_type=identity_type,
+                    identity_value=identity_value,
+                    source="customer_card_erased",
+                    expression_method=ConsentMethod.BOT_COMMAND,
+                    customer=None,
+                )
+
+        # Account bindings are identifiers of browser sessions. Mark them
+        # revoked as part of erasure so a previously authenticated browser
+        # cannot continue under the removed customer context.
+        from apps.customers.models import WebSessionBinding
+        WebSessionBinding.objects.filter(account__customer=customer).update(
+            revoked_at=timezone.now()
+        )
 
         Order.objects.filter(customer=customer).update(
             customer=None,
