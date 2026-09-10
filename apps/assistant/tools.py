@@ -875,7 +875,10 @@ class AssistantToolExecutor:
             r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.+-])",
             self.event.raw_text,
         )
-        if email_match and draft.payment_method == PaymentMethod.CARD_PREPAYMENT:
+        if email_match and (
+            draft.payment_method == PaymentMethod.CARD_PREPAYMENT
+            or arguments.get("payment_method") == PaymentMethod.CARD_PREPAYMENT
+        ):
             arguments["contact_email"] = email_match.group(0)
 
         if not arguments:
@@ -892,7 +895,7 @@ class AssistantToolExecutor:
         sentence that also contains products and payment method.
         """
         match = re.search(
-            r"\b(?P<prefix>по\s+адресу|адрес(?:у|\s+доставки)?|на)\s+(?P<candidate>.+)",
+            r"\b(?P<prefix>по\s+адресу|адрес(?:у|\s+доставки)?|на)\s*[:,-]?\s+(?P<candidate>.+)",
             raw_text,
             flags=re.IGNORECASE,
         )
@@ -1030,6 +1033,7 @@ class AssistantToolExecutor:
             "receiving_type": draft.receiving_type or None,
             "delivery_address": draft.delivery_address or None,
             "payment_method": draft.payment_method or None,
+            "contact_email": draft.contact_email or None,
             "missing_fields": draft.missing_fields,
             "total_amount": str(draft.total_amount) if draft.total_amount is not None else None,
         }
@@ -1179,7 +1183,12 @@ class AssistantToolExecutor:
             if args.contact_phone is not None:
                 updates["contact_phone"] = normalize_phone(args.contact_phone)
             if args.contact_email is not None:
-                updates["contact_email"] = normalize_email(args.contact_email)
+                contact_email = normalize_email(args.contact_email)
+                updates["contact_email"] = contact_email
+                if draft.customer_id:
+                    type(draft.customer).objects.filter(pk=draft.customer_id).exclude(
+                        email=contact_email
+                    ).update(email=contact_email)
         except DjangoValidationError as exc:
             raise ValueError("Контактные данные имеют неверный формат") from exc
         if updates:

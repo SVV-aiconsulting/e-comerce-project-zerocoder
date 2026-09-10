@@ -16,7 +16,8 @@ class DiscountService:
         items_total: Decimal,
     ) -> DiscountRule | None:
         today = timezone.localdate()
-        rules = DiscountRule.objects.filter(is_active=True).order_by("priority")
+        rules = DiscountRule.objects.filter(is_active=True).order_by("priority", "id")
+        applicable_by_priority: dict[int, list[DiscountRule]] = {}
 
         for rule in rules:
             if rule.date_start and today < rule.date_start:
@@ -27,7 +28,20 @@ class DiscountService:
                 continue
             if customer.orders_count < rule.min_customer_orders:
                 continue
-            return rule
+            applicable_by_priority.setdefault(rule.priority, []).append(rule)
+
+        for same_priority_rules in applicable_by_priority.values():
+            # Priority remains the manager's primary choice. If several active
+            # rules deliberately share it, select the larger item discount
+            # deterministically instead of silently favouring the oldest row.
+            return max(
+                same_priority_rules,
+                key=lambda rule: (
+                    DiscountService.calculate_discount(rule, items_total),
+                    bool(rule.free_delivery),
+                    -rule.pk,
+                ),
+            )
 
         return None
 

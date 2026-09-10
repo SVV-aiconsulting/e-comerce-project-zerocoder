@@ -999,7 +999,7 @@ def test_single_message_order_applies_address_delivery_payment_and_previews(
     settings.AI_ASSISTANT_ENABLED = True
     settings.AI_CONSULTANT_ENABLED = True
     settings.YANDEX_DELIVERY_ENABLED = True
-    customer.email = "buyer@example.com"
+    customer.email = "stored@example.com"
     customer.save(update_fields=["email", "updated_at"])
     call_command("load_demo_data")
     provider = ScriptedProvider([])
@@ -1027,7 +1027,10 @@ def test_single_message_order_applies_address_delivery_payment_and_previews(
         external_user_id="one-message-user",
         conversation_key="one-message-dialog",
         customer=customer,
-        raw_text="Хочу 2 упаковки креветок по адресу Мурманск Ленина 64. Оплата картой",
+        raw_text=(
+            "Хочу 2 упаковки креветок по адресу: Мурманск Ленина 64. "
+            "Оплата картой. Email buyer@example.com"
+        ),
     ).event
 
     InboundEventProcessor.process(event.pk)
@@ -1046,6 +1049,9 @@ def test_single_message_order_applies_address_delivery_payment_and_previews(
     assert response["type"] == "order_preview", response
     assert "Проверьте заказ" in response["message"]
     assert "Креветки тигровые" in response["message"]
+    assert "Чек будет направлен на: buyer@example.com" in response["message"]
+    customer.refresh_from_db()
+    assert customer.email == "buyer@example.com"
     assert provider.calls == []
 
 

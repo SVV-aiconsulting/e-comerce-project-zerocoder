@@ -46,7 +46,8 @@ class InboundEventProcessor:
                     locked_draft.save(update_fields=["customer", "updated_at"])
 
             contact_phone = str(event.raw_payload.get("contact_phone", "")).strip()
-            contact_email = str(event.raw_payload.get("contact_email", "")).strip()
+            supplied_email = str(event.raw_payload.get("contact_email", "")).strip()
+            contact_email = supplied_email
             if not contact_phone and event.customer_id and event.channel != "website":
                 contact_phone = event.customer.phone
             if not contact_email and event.customer_id and event.channel != "website":
@@ -67,6 +68,13 @@ class InboundEventProcessor:
             if contact_updates:
                 OrderDraft.objects.filter(pk=draft.pk).update(**contact_updates)
                 draft.refresh_from_db(fields=list(contact_updates))
+            # An email explicitly supplied through a channel adapter is the
+            # customer's new receipt address.  A fallback CRM email above is
+            # deliberately not written back as a change.
+            if supplied_email and contact_email and event.customer_id:
+                type(event.customer).objects.filter(pk=event.customer_id).exclude(
+                    email=contact_email
+                ).update(email=contact_email)
 
             # A fresh website AI conversation can reuse only the products from
             # its browser cart.  Address, receiving method, payment method and

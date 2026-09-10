@@ -60,6 +60,19 @@ def register_event(event_id, customer, text):
 
 
 @pytest.mark.django_db
+def test_telegram_uses_existing_customer_email_for_a_receipt(customer, settings):
+    settings.AI_ASSISTANT_ENABLED = False
+    settings.AI_ORDER_PROCESSING_ENABLED = False
+    customer.email = "receipt@example.com"
+    customer.save(update_fields=["email", "updated_at"])
+    event = register_event("processor-existing-receipt-email", customer, "Оформить заказ")
+
+    outcome = InboundEventProcessor.process(event.pk)
+
+    assert OrderDraft.objects.get(pk=outcome.draft_id).contact_email == "receipt@example.com"
+
+
+@pytest.mark.django_db
 def test_ai_processor_previews_confirms_and_creates_one_order(
     customer,
     product,

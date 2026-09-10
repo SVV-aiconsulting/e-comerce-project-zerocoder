@@ -860,6 +860,11 @@ class OrderAssistantService:
                 lines.append(f"Ориентировочный срок: {preview['delivery_days']} дн.")
         else:
             lines.append("Получение: самовывоз")
+        if (
+            result.get("payment_method") == PaymentMethod.CARD_PREPAYMENT
+            and result.get("contact_email")
+        ):
+            lines.append(f"Чек будет направлен на: {result['contact_email']}")
         lines.extend([f"Итого: {OrderAssistantService._money(preview.get('total_amount'))} ₽", ""])
         if result.get("receiving_type") == "delivery":
             lines.append(
