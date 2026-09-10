@@ -370,6 +370,81 @@ def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart,
 
 
 @pytest.mark.django_db
+def test_customer_erasure_does_not_resume_old_cart_or_assistant_draft(customer, active_cart, product):
+    from apps.carts.models import Cart
+    from apps.carts.services import CartService
+    from apps.common.enums import CartStatus
+    from apps.intake.enums import OrderDraftStatus
+    from apps.intake.models import AssistantMessage, ConversationMemory, InboundEvent, OrderDraft, OrderDraftItem
+
+    CartService.set_item_quantity(active_cart, product, Decimal("2"))
+    active_cart.delivery_address = "Москва, Разина, 15"
+    active_cart.payment_method = "card_prepayment"
+    active_cart.save(update_fields=["delivery_address", "payment_method", "updated_at"])
+    draft = OrderDraft.objects.create(
+        customer=customer,
+        cart=active_cart,
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+        conversation_key="12345",
+        delivery_address="Москва, Разина, 15",
+        payment_method="card_prepayment",
+    )
+    OrderDraftItem.objects.create(
+        draft=draft,
+        line_number=1,
+        raw_product_name=product.name,
+        product=product,
+        requested_quantity=Decimal("2"),
+        requested_unit=product.unit,
+        match_status="matched",
+    )
+    event = InboundEvent.objects.create(
+        channel=Channel.TELEGRAM,
+        external_event_id="erasure-old-event",
+        external_user_id="12345",
+        conversation_key="12345",
+        customer=customer,
+        draft=draft,
+    )
+    AssistantMessage.objects.create(
+        event=event,
+        conversation_key="12345",
+        role="assistant",
+        content="Старый адрес: Москва, Разина, 15",
+    )
+    ConversationMemory.objects.create(
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+        conversation_key="12345",
+        expected_fields=["delivery_address"],
+    )
+
+    CustomerService.anonymize_orders_and_delete(customer=customer)
+
+    active_cart.refresh_from_db()
+    assert active_cart.status == CartStatus.ABANDONED
+    assert active_cart.customer is None
+    assert active_cart.delivery_address == ""
+    assert active_cart.payment_method == ""
+    assert not active_cart.items.exists()
+    draft.refresh_from_db()
+    assert draft.status == OrderDraftStatus.CANCELLED
+    assert draft.delivery_address == ""
+    assert draft.cart is None
+    assert not AssistantMessage.objects.filter(event=event).exists()
+    assert not ConversationMemory.objects.filter(channel=Channel.TELEGRAM, external_user_id="12345").exists()
+
+    new_cart = CartService.get_or_create_active_cart(
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+    )
+    assert new_cart.pk != active_cart.pk
+    assert new_cart.delivery_address == ""
+    assert not new_cart.items.exists()
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize(
     ("channel", "identity_type", "external_user_id"),
     [

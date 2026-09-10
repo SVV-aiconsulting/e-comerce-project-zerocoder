@@ -8,7 +8,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
-from apps.common.enums import Channel, CustomerSource, CustomerStatus
+from apps.common.enums import CartStatus, Channel, CustomerSource, CustomerStatus
 from apps.common.exceptions import ChannelIdentityAlreadyLinkedError
 from apps.common.utils import generate_public_code
 from apps.customers.models import (
@@ -86,6 +86,67 @@ class CustomerService:
                     expression_method=ConsentMethod.BOT_COMMAND,
                     customer=None,
                 )
+
+        # A channel ID remains stable after a CRM card is erased. Active carts
+        # and assistant drafts are keyed by that ID, so merely nulling their
+        # customer FK would let the next registration resume an old address,
+        # payment method or cart. Abandon these transient records and erase
+        # their content before deleting the customer.
+        from apps.carts.models import Cart, CheckoutPreview
+        from apps.carts.services import CartService
+        from apps.intake.enums import ACTIVE_DRAFT_STATUSES, OrderDraftStatus
+        from apps.intake.models import AssistantMessage, ConversationMemory, InboundEvent, OrderDraft
+
+        identity_scope = Q()
+        for channel, identity_value in consent_identities:
+            identity_scope |= Q(channel=channel, external_user_id=identity_value)
+
+        carts = list(
+            Cart.objects.select_for_update()
+            .filter(Q(customer=customer) | identity_scope, status=CartStatus.ACTIVE)
+        )
+        for cart in carts:
+            CartService.clear(cart)
+            Cart.objects.filter(pk=cart.pk).update(
+                customer=None,
+                status=CartStatus.ABANDONED,
+            )
+
+        active_drafts = OrderDraft.objects.select_for_update().filter(
+            Q(customer=customer) | identity_scope,
+            status__in=ACTIVE_DRAFT_STATUSES,
+        )
+        for draft in active_drafts:
+            draft.items.all().delete()
+        active_drafts.update(
+            customer=None,
+            cart=None,
+            checkout_preview=None,
+            status=OrderDraftStatus.CANCELLED,
+            receiving_type="",
+            delivery_address="",
+            payment_method="",
+            contact_phone="",
+            contact_email="",
+            customer_comment="",
+            desired_date=None,
+            desired_time_interval="",
+            missing_fields=[],
+            manager_attention_required=False,
+            escalation_reason="",
+            updated_at=timezone.now(),
+        )
+        # A preview without an order is only a short-lived checkout offer; it
+        # must not retain erased address/contact snapshots.
+        OrderDraft.objects.filter(
+            checkout_preview__cart__in=carts,
+            checkout_preview__order__isnull=True,
+        ).update(checkout_preview=None, updated_at=timezone.now())
+        CheckoutPreview.objects.filter(cart__in=carts, order__isnull=True).delete()
+        ConversationMemory.objects.filter(identity_scope).delete()
+        AssistantMessage.objects.filter(
+            event__in=InboundEvent.objects.filter(identity_scope)
+        ).delete()
 
         # Account bindings are identifiers of browser sessions. Mark them
         # revoked as part of erasure so a previously authenticated browser
