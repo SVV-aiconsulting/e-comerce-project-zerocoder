@@ -303,6 +303,9 @@ def test_email_phone_conflict_does_not_replace_or_block_customer(customer):
 
 @pytest.mark.django_db
 def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart, product):
+    from django.utils import timezone
+    from datetime import timedelta
+    from apps.carts.models import CheckoutPreview
     from apps.common.enums import Channel, PaymentMethod, ReceivingType
     from apps.orders.services import OrderService
     from apps.orders.models import Order
@@ -318,6 +321,13 @@ def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart,
         delivery_address="Москва, Тверская, 1",
         customer_comment="Позвонить перед доставкой",
     )
+    preview = CheckoutPreview.objects.create(
+        cart=active_cart,
+        cart_revision=active_cart.revision,
+        customer=customer,
+        snapshot={"terms": {}, "items": [], "totals": {}},
+        expires_at=timezone.now() + timedelta(minutes=15),
+    )
 
     CustomerService.anonymize_orders_and_delete(customer=customer)
 
@@ -329,3 +339,5 @@ def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart,
     assert order.customer_email_snapshot == ""
     assert order.delivery_address == ""
     assert order.items.exists()
+    preview.refresh_from_db()
+    assert preview.customer is None

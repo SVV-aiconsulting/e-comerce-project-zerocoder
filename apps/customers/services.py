@@ -46,6 +46,7 @@ class CustomerService:
         основания хранения уже оформленного заказа проверяет менеджер.
         """
         from apps.orders.models import Order
+        from apps.carts.models import CheckoutPreview
 
         Order.objects.filter(customer=customer).update(
             customer=None,
@@ -61,6 +62,10 @@ class CustomerService:
         CustomerIdentityConflict.objects.filter(
             Q(source_customer=customer) | Q(matched_customer=customer)
         ).delete()
+        # A preview is a technical, short-lived checkout snapshot. It can
+        # refer to a customer even after its resulting order has been
+        # anonymized, so clear that protected link before removing the card.
+        CheckoutPreview.objects.filter(customer=customer).update(customer=None)
         customer.delete()
 
     @staticmethod
