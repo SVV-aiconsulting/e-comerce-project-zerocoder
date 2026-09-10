@@ -42,68 +42,65 @@ class CustomerService:
         """Удаляет карточку CRM, сохраняя неидентифицирующую историю заказов.
 
         Операцию намеренно вызывает только сотрудник через административный
-        интерфейс. Отзыв согласия сам по себе лишь ограничивает новые операции:
-        основания хранения уже оформленного заказа проверяет менеджер.
+        интерфейс. В отличие от простого отзыва согласия, она удаляет весь
+        клиентский контур, а оформленные заказы сохраняет без персональных данных.
         """
-        from apps.orders.models import Order
-        from apps.carts.models import CheckoutPreview
-        from apps.privacy.models import ConsentMethod, IdentityType, PersonalDataConsentEvent
-        from apps.privacy.services import ConsentService
+        from apps.delivery.models import DeliveryQuote, Shipment
+        from apps.orders.models import Order, OrderStatusHistory
+        from apps.payments.models import Payment, PaymentWebhookEvent, Refund
+        from apps.privacy.models import PersonalDataConsentEvent
 
-        # A platform account can keep talking to a bot after its CRM card has
-        # been erased. The consent registry is immutable, therefore we append
-        # a withdrawal event for every currently linked channel identity
-        # instead of deleting its audit trail. A subsequent /start then asks
-        # for a new explicit consent before registration or checkout.
-        identity_types = {
-            Channel.TELEGRAM: IdentityType.TELEGRAM_USER_ID,
-            Channel.VK: IdentityType.VK_USER_ID,
-            Channel.MAX: IdentityType.MAX_USER_ID,
-            Channel.WEBSITE: IdentityType.WEBSITE_SESSION_ID,
-        }
-        consent_identities = {
-            (identity.channel, identity.external_user_id): identity_types.get(identity.channel)
+        identities = {
+            (identity.channel, identity.external_user_id)
             for identity in customer.channel_identities.all()
         }
-        # A website customer is usually connected to a consent event through
-        # the browser session, not a CustomerChannelIdentity. Include every
-        # consent identity already associated with the card as well.
         for event in PersonalDataConsentEvent.objects.filter(customer=customer):
-            consent_identities.setdefault(
-                (event.channel, event.identity_value), event.identity_type
-            )
-
-        for (channel, identity_value), identity_type in consent_identities.items():
-            if identity_type and ConsentService.has_current_consent(
-                channel=channel,
-                identity_value=identity_value,
-            ):
-                ConsentService.withdraw(
-                    channel=channel,
-                    identity_type=identity_type,
-                    identity_value=identity_value,
-                    source="customer_card_erased",
-                    expression_method=ConsentMethod.BOT_COMMAND,
-                    customer=None,
-                )
+            identities.add((event.channel, event.identity_value))
 
         identity_scope = Q()
-        for channel, identity_value in consent_identities:
+        consent_scope = Q(customer=customer)
+        for channel, identity_value in identities:
             identity_scope |= Q(channel=channel, external_user_id=identity_value)
+            consent_scope |= Q(channel=channel, identity_value=identity_value)
         CustomerService._erase_transient_checkout_state(
             identity_scope=identity_scope,
             customer=customer,
+            purge=True,
         )
 
-        # Account bindings are identifiers of browser sessions. Mark them
-        # revoked as part of erasure so a previously authenticated browser
-        # cannot continue under the removed customer context.
-        from apps.customers.models import WebSessionBinding
-        WebSessionBinding.objects.filter(account__customer=customer).update(
-            revoked_at=timezone.now()
-        )
+        # Remove web credentials as well: a later registration must create a
+        # new account and must not reuse the erased email or browser binding.
+        from apps.customers.models import LoginCode, WebAccount
+        account_users = list(WebAccount.objects.filter(customer=customer).values_list("user_id", flat=True))
+        LoginCode.objects.filter(email=customer.email).delete()
+        if account_users:
+            from django.contrib.auth import get_user_model
+            get_user_model().objects.filter(pk__in=account_users).delete()
 
-        Order.objects.filter(customer=customer).update(
+        # Consent records contain a channel identity. They are intentionally
+        # removed for an erasure request; the document versions remain, but no
+        # record can be linked back to the former person.
+        PersonalDataConsentEvent.objects.filter(consent_scope).update(previous_event=None)
+        PersonalDataConsentEvent.objects.filter(consent_scope).delete()
+
+        orders = Order.objects.filter(customer=customer)
+        # Provider payloads can include an address and contact details. Delivery
+        # entities are transient integration state, not anonymized order history.
+        Shipment.objects.filter(order__in=orders).delete()
+        DeliveryQuote.objects.filter(order__in=orders).delete()
+
+        payment_ids = list(Payment.objects.filter(order__in=orders).values_list("pk", flat=True))
+        PaymentWebhookEvent.objects.filter(payment_id__in=payment_ids).update(
+            remote_ip=None, payload={}, processing_error=""
+        )
+        Payment.objects.filter(pk__in=payment_ids).update(
+            receipt_data={}, provider_payload={}, confirmation_url="", last_error=""
+        )
+        Refund.objects.filter(payment_id__in=payment_ids).update(
+            receipt_data={}, provider_payload={}, last_error="", reason=""
+        )
+        OrderStatusHistory.objects.filter(order__in=orders).update(comment="")
+        orders.update(
             customer=None,
             customer_deleted=True,
             customer_code_snapshot="",
@@ -113,14 +110,11 @@ class CustomerService:
             source_external_user_id_snapshot="",
             delivery_address="",
             customer_comment="",
+            manager_comment="",
         )
         CustomerIdentityConflict.objects.filter(
             Q(source_customer=customer) | Q(matched_customer=customer)
         ).delete()
-        # A preview is a technical, short-lived checkout snapshot. It can
-        # refer to a customer even after its resulting order has been
-        # anonymized, so clear that protected link before removing the card.
-        CheckoutPreview.objects.filter(customer=customer).update(customer=None)
         customer.delete()
 
     @staticmethod
@@ -137,7 +131,7 @@ class CustomerService:
         )
 
     @staticmethod
-    def _erase_transient_checkout_state(*, identity_scope: Q, customer: Customer | None = None) -> None:
+    def _erase_transient_checkout_state(*, identity_scope: Q, customer: Customer | None = None, purge: bool = False) -> None:
         """Remove non-order cart and dialogue data from a customer identity."""
         from apps.carts.models import Cart, CheckoutPreview
         from apps.carts.services import CartService
@@ -147,23 +141,27 @@ class CustomerService:
         scope = identity_scope
         if customer is not None:
             scope |= Q(customer=customer)
-        carts = list(
-            Cart.objects.select_for_update().filter(scope, status=CartStatus.ACTIVE)
-        )
+        cart_query = Cart.objects.select_for_update().filter(scope)
+        if not purge:
+            cart_query = cart_query.filter(status=CartStatus.ACTIVE)
+        carts = list(cart_query)
         for cart in carts:
             CartService.clear(cart)
-            Cart.objects.filter(pk=cart.pk).update(
-                customer=None,
-                status=CartStatus.ABANDONED,
-            )
+            if not purge:
+                Cart.objects.filter(pk=cart.pk).update(customer=None, status=CartStatus.ABANDONED)
 
-        active_drafts = OrderDraft.objects.select_for_update().filter(
-            scope,
-            status__in=ACTIVE_DRAFT_STATUSES,
-        )
-        for draft in active_drafts:
+        draft_query = OrderDraft.objects.select_for_update().filter(scope)
+        if not purge:
+            draft_query = draft_query.filter(status__in=ACTIVE_DRAFT_STATUSES)
+        drafts = list(draft_query)
+        for draft in drafts:
             draft.items.all().delete()
-        active_drafts.update(
+        if purge:
+            OrderDraft.objects.filter(pk__in=[draft.pk for draft in drafts]).update(
+                cart=None, checkout_preview=None, customer=None
+            )
+        else:
+            OrderDraft.objects.filter(pk__in=[draft.pk for draft in drafts]).update(
             customer=None,
             cart=None,
             checkout_preview=None,
@@ -180,18 +178,24 @@ class CustomerService:
             manager_attention_required=False,
             escalation_reason="",
             updated_at=timezone.now(),
-        )
+            )
         # A preview without an order is only a short-lived checkout offer; it
         # must not retain erased address/contact snapshots.
         OrderDraft.objects.filter(
             checkout_preview__cart__in=carts,
-            checkout_preview__order__isnull=True,
         ).update(checkout_preview=None, updated_at=timezone.now())
-        CheckoutPreview.objects.filter(cart__in=carts, order__isnull=True).delete()
+        CheckoutPreview.objects.filter(cart__in=carts).delete()
         ConversationMemory.objects.filter(identity_scope).delete()
-        AssistantMessage.objects.filter(
-            event__in=InboundEvent.objects.filter(scope)
-        ).delete()
+        events = InboundEvent.objects.filter(scope)
+        AssistantMessage.objects.filter(event__in=events).delete()
+        if purge:
+            from apps.intake.models import AIExtractionRun, AssistantTurn, OutboundMessage
+            OutboundMessage.objects.filter(event__in=events).delete()
+            AIExtractionRun.objects.filter(event__in=events).delete()
+            AssistantTurn.objects.filter(event__in=events).delete()
+            events.delete()
+            OrderDraft.objects.filter(pk__in=[draft.pk for draft in drafts]).delete()
+            Cart.objects.filter(pk__in=[cart.pk for cart in carts]).delete()
 
     @staticmethod
     def find_by_channel_identity(channel: str, external_user_id: str) -> Customer | None:

@@ -329,6 +329,17 @@ def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart,
         customer=customer,
         snapshot={"terms": {}, "items": [], "totals": {}},
         expires_at=timezone.now() + timedelta(minutes=15),
+        order=order,
+    )
+    from apps.intake.models import OrderDraft
+    linked_draft = OrderDraft.objects.create(
+        cart=active_cart,
+        checkout_preview=preview,
+        customer=customer,
+        channel=Channel.TELEGRAM,
+        external_user_id="12345",
+        conversation_key="erasure-confirmed-preview",
+        converted_order=order,
     )
     ConsentService.record(
         channel=Channel.TELEGRAM,
@@ -354,19 +365,16 @@ def test_manager_deletion_preserves_and_anonymizes_orders(customer, active_cart,
     assert order.customer_email_snapshot == ""
     assert order.delivery_address == ""
     assert order.items.exists()
-    preview.refresh_from_db()
-    assert preview.customer is None
+    assert not CheckoutPreview.objects.filter(pk=preview.pk).exists()
+    assert not OrderDraft.objects.filter(pk=linked_draft.pk).exists()
     assert not ConsentService.has_current_consent(
         channel=Channel.TELEGRAM,
         identity_value="12345",
     )
-    withdrawal = PersonalDataConsentEvent.objects.filter(
+    assert not PersonalDataConsentEvent.objects.filter(
         channel=Channel.TELEGRAM,
         identity_value="12345",
-    ).latest("occurred_at", "id")
-    assert withdrawal.status == ConsentStatus.WITHDRAWN
-    assert withdrawal.source == "customer_card_erased"
-    assert withdrawal.customer is None
+    ).exists()
 
 
 @pytest.mark.django_db
@@ -422,16 +430,9 @@ def test_customer_erasure_does_not_resume_old_cart_or_assistant_draft(customer, 
 
     CustomerService.anonymize_orders_and_delete(customer=customer)
 
-    active_cart.refresh_from_db()
-    assert active_cart.status == CartStatus.ABANDONED
-    assert active_cart.customer is None
-    assert active_cart.delivery_address == ""
-    assert active_cart.payment_method == ""
-    assert not active_cart.items.exists()
-    draft.refresh_from_db()
-    assert draft.status == OrderDraftStatus.CANCELLED
-    assert draft.delivery_address == ""
-    assert draft.cart is None
+    assert not Cart.objects.filter(pk=active_cart.pk).exists()
+    assert not OrderDraft.objects.filter(pk=draft.pk).exists()
+    assert not InboundEvent.objects.filter(pk=event.pk).exists()
     assert not AssistantMessage.objects.filter(event=event).exists()
     assert not ConversationMemory.objects.filter(channel=Channel.TELEGRAM, external_user_id="12345").exists()
 
@@ -454,7 +455,7 @@ def test_customer_erasure_does_not_resume_old_cart_or_assistant_draft(customer, 
         (Channel.WEBSITE, "website_session_id", "web-erasure"),
     ],
 )
-def test_customer_erasure_revokes_consent_for_every_supported_channel(
+def test_customer_erasure_removes_consent_for_every_supported_channel(
     db, channel, identity_type, external_user_id
 ):
     from apps.privacy.models import ConsentMethod, ConsentStatus, IdentityType
@@ -487,3 +488,7 @@ def test_customer_erasure_revokes_consent_for_every_supported_channel(
         channel=channel,
         identity_value=external_user_id,
     )
+    from apps.privacy.models import PersonalDataConsentEvent
+    assert not PersonalDataConsentEvent.objects.filter(
+        channel=channel, identity_value=external_user_id
+    ).exists()
