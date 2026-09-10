@@ -217,3 +217,38 @@ def test_bot_consent_api_grant_reuse_and_withdrawal(settings):
     assert reused.data["granted"] is True
     assert withdrawn.data["status"] == ConsentStatus.WITHDRAWN
     assert after_withdrawal.data["granted"] is False
+
+
+@pytest.mark.django_db
+def test_regrant_after_customer_erasure_clears_orphan_channel_state(settings, monkeypatch):
+    from apps.customers.services import CustomerService
+
+    settings.ADAPTER_API_TOKENS = ["test-token"]
+    calls = []
+    monkeypatch.setattr(
+        CustomerService,
+        "erase_transient_channel_state",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    client = APIClient()
+    client.credentials(HTTP_X_ADAPTER_TOKEN="test-token")
+    payload = {"channel": Channel.TELEGRAM, "external_user_id": "tg-erasure"}
+
+    client.post(
+        "/api/privacy/consent/",
+        {**payload, "action": ConsentStatus.GRANTED, "source": "telegram_bot_button"},
+        format="json",
+    )
+    client.post(
+        "/api/privacy/consent/",
+        {**payload, "action": ConsentStatus.WITHDRAWN, "source": "customer_card_erased"},
+        format="json",
+    )
+    response = client.post(
+        "/api/privacy/consent/",
+        {**payload, "action": ConsentStatus.GRANTED, "source": "telegram_bot_button"},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    assert calls == [payload]

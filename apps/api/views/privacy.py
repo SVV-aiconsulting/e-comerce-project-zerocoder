@@ -77,6 +77,20 @@ class ConsentStatusView(APIView):
                 customer=customer,
                 evidence={"adapter_authenticated": True},
             )
+            # A consent granted after account erasure starts a fresh dialogue.
+            # This second guard removes any orphan cart/draft left by releases
+            # that predated the erasure cleanup.
+            previous = event.previous_event
+            if (
+                event.status == ConsentStatus.GRANTED
+                and previous is not None
+                and previous.status == ConsentStatus.WITHDRAWN
+                and previous.source == "customer_card_erased"
+            ):
+                CustomerService.erase_transient_channel_state(
+                    channel=data["channel"],
+                    external_user_id=data["external_user_id"],
+                )
             if customer is not None and event.status == ConsentStatus.GRANTED:
                 customer.personal_data_consent = True
                 customer.save(update_fields=["personal_data_consent", "updated_at"])

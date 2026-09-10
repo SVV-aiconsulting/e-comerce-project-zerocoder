@@ -87,23 +87,68 @@ class CustomerService:
                     customer=None,
                 )
 
-        # A channel ID remains stable after a CRM card is erased. Active carts
-        # and assistant drafts are keyed by that ID, so merely nulling their
-        # customer FK would let the next registration resume an old address,
-        # payment method or cart. Abandon these transient records and erase
-        # their content before deleting the customer.
+        identity_scope = Q()
+        for channel, identity_value in consent_identities:
+            identity_scope |= Q(channel=channel, external_user_id=identity_value)
+        CustomerService._erase_transient_checkout_state(
+            identity_scope=identity_scope,
+            customer=customer,
+        )
+
+        # Account bindings are identifiers of browser sessions. Mark them
+        # revoked as part of erasure so a previously authenticated browser
+        # cannot continue under the removed customer context.
+        from apps.customers.models import WebSessionBinding
+        WebSessionBinding.objects.filter(account__customer=customer).update(
+            revoked_at=timezone.now()
+        )
+
+        Order.objects.filter(customer=customer).update(
+            customer=None,
+            customer_deleted=True,
+            customer_code_snapshot="",
+            customer_name_snapshot="Клиент удалён",
+            customer_phone_snapshot="",
+            customer_email_snapshot="",
+            source_external_user_id_snapshot="",
+            delivery_address="",
+            customer_comment="",
+        )
+        CustomerIdentityConflict.objects.filter(
+            Q(source_customer=customer) | Q(matched_customer=customer)
+        ).delete()
+        # A preview is a technical, short-lived checkout snapshot. It can
+        # refer to a customer even after its resulting order has been
+        # anonymized, so clear that protected link before removing the card.
+        CheckoutPreview.objects.filter(customer=customer).update(customer=None)
+        customer.delete()
+
+    @staticmethod
+    @transaction.atomic
+    def erase_transient_channel_state(*, channel: str, external_user_id: str) -> None:
+        """Erase unfinished state for one stable frontend identity.
+
+        This is also run when a person gives consent again after a card-erasure
+        withdrawal. It handles legacy/orphan drafts that were created before a
+        card was linked and therefore cannot be discovered through customer_id.
+        """
+        CustomerService._erase_transient_checkout_state(
+            identity_scope=Q(channel=channel, external_user_id=external_user_id),
+        )
+
+    @staticmethod
+    def _erase_transient_checkout_state(*, identity_scope: Q, customer: Customer | None = None) -> None:
+        """Remove non-order cart and dialogue data from a customer identity."""
         from apps.carts.models import Cart, CheckoutPreview
         from apps.carts.services import CartService
         from apps.intake.enums import ACTIVE_DRAFT_STATUSES, OrderDraftStatus
         from apps.intake.models import AssistantMessage, ConversationMemory, InboundEvent, OrderDraft
 
-        identity_scope = Q()
-        for channel, identity_value in consent_identities:
-            identity_scope |= Q(channel=channel, external_user_id=identity_value)
-
+        scope = identity_scope
+        if customer is not None:
+            scope |= Q(customer=customer)
         carts = list(
-            Cart.objects.select_for_update()
-            .filter(Q(customer=customer) | identity_scope, status=CartStatus.ACTIVE)
+            Cart.objects.select_for_update().filter(scope, status=CartStatus.ACTIVE)
         )
         for cart in carts:
             CartService.clear(cart)
@@ -113,7 +158,7 @@ class CustomerService:
             )
 
         active_drafts = OrderDraft.objects.select_for_update().filter(
-            Q(customer=customer) | identity_scope,
+            scope,
             status__in=ACTIVE_DRAFT_STATUSES,
         )
         for draft in active_drafts:
@@ -145,36 +190,8 @@ class CustomerService:
         CheckoutPreview.objects.filter(cart__in=carts, order__isnull=True).delete()
         ConversationMemory.objects.filter(identity_scope).delete()
         AssistantMessage.objects.filter(
-            event__in=InboundEvent.objects.filter(identity_scope)
+            event__in=InboundEvent.objects.filter(scope)
         ).delete()
-
-        # Account bindings are identifiers of browser sessions. Mark them
-        # revoked as part of erasure so a previously authenticated browser
-        # cannot continue under the removed customer context.
-        from apps.customers.models import WebSessionBinding
-        WebSessionBinding.objects.filter(account__customer=customer).update(
-            revoked_at=timezone.now()
-        )
-
-        Order.objects.filter(customer=customer).update(
-            customer=None,
-            customer_deleted=True,
-            customer_code_snapshot="",
-            customer_name_snapshot="Клиент удалён",
-            customer_phone_snapshot="",
-            customer_email_snapshot="",
-            source_external_user_id_snapshot="",
-            delivery_address="",
-            customer_comment="",
-        )
-        CustomerIdentityConflict.objects.filter(
-            Q(source_customer=customer) | Q(matched_customer=customer)
-        ).delete()
-        # A preview is a technical, short-lived checkout snapshot. It can
-        # refer to a customer even after its resulting order has been
-        # anonymized, so clear that protected link before removing the card.
-        CheckoutPreview.objects.filter(customer=customer).update(customer=None)
-        customer.delete()
 
     @staticmethod
     def find_by_channel_identity(channel: str, external_user_id: str) -> Customer | None:
